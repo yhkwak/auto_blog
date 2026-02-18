@@ -98,27 +98,6 @@ def write_opinion_and_publish(
     print(f"발행 완료: {result}")
 
 
-def auth_flow() -> None:
-    """네이버 OAuth 인증 플로우를 안내합니다."""
-    blog_client = NaverBlogClient()
-    auth_url = blog_client.get_auth_url()
-
-    print("\n=== 네이버 블로그 인증 ===")
-    print("1. 아래 URL을 브라우저에서 열어 인증을 완료하세요:")
-    print(f"   {auth_url}")
-    print()
-    print("2. 인증 후 리다이렉트된 URL에서 'code' 파라미터 값을 복사하세요.")
-
-    code = input("\n인증 코드를 입력하세요: ").strip()
-    if not code:
-        print("인증 코드가 입력되지 않았습니다.")
-        return
-
-    access_token = blog_client.get_access_token(code)
-    print(f"\nAccess Token: {access_token}")
-    print("\n이 토큰을 .env 파일의 NAVER_ACCESS_TOKEN에 설정하세요.")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="자동 블로그 글 작성 및 네이버 블로그 업로드 프로그램"
@@ -161,9 +140,6 @@ def main() -> None:
         "auto",
         help="트렌드 자동 분석 후 가장 조회수 높을 이슈 정리글 작성 및 발행 (주제 입력 불필요)",
     )
-
-    # auth 명령어
-    subparsers.add_parser("auth", help="네이버 블로그 OAuth 인증")
 
     # schedule 명령어
     schedule_parser = subparsers.add_parser("schedule", help="스케줄링 모드로 실행")
@@ -213,9 +189,6 @@ def main() -> None:
                 print(f"[오류] {e}")
             sys.exit(1)
         write_auto_trending_and_publish()
-
-    elif args.command == "auth":
-        auth_flow()
 
     elif args.command == "schedule":
         errors = Config.validate()

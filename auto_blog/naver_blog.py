@@ -1,94 +1,192 @@
 import logging
-import requests
+import time
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+
 from .config import Config
 
 logger = logging.getLogger(__name__)
 
-NAVER_BLOG_WRITE_URL = "https://openapi.naver.com/blog/writePost.json"
-
 
 class NaverBlogClient:
-    """네이버 블로그 API 클라이언트입니다."""
+    """Selenium 브라우저 자동화로 네이버 블로그에 글을 발행합니다."""
+
+    NAVER_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 
     def __init__(self):
-        self.headers = {
-            "Authorization": f"Bearer {Config.NAVER_ACCESS_TOKEN}",
-        }
+        self.naver_id = Config.NAVER_ID
+        self.naver_pw = Config.NAVER_PASSWORD
+
+    # ── WebDriver 생성 ────────────────────────────────────────────────────
+
+    def _create_driver(self) -> webdriver.Chrome:
+        """자동화 감지를 우회한 Chrome WebDriver를 생성합니다."""
+        options = Options()
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": (
+                    "Object.defineProperty(navigator, 'webdriver', "
+                    "{get: () => undefined});"
+                )
+            },
+        )
+        driver.implicitly_wait(10)
+        return driver
+
+    # ── 네이버 로그인 ─────────────────────────────────────────────────────
+
+    def _login(self, driver: webdriver.Chrome) -> None:
+        """네이버에 로그인합니다 (클립보드 붙여넣기 방식으로 자동화 감지 우회)."""
+        import pyperclip
+
+        driver.get(self.NAVER_LOGIN_URL)
+        time.sleep(2)
+
+        # ID 입력
+        id_input = driver.find_element(By.ID, "id")
+        id_input.click()
+        time.sleep(0.2)
+        pyperclip.copy(self.naver_id)
+        id_input.send_keys(Keys.CONTROL, "v")
+        time.sleep(0.3)
+
+        # PW 입력
+        pw_input = driver.find_element(By.ID, "pw")
+        pw_input.click()
+        time.sleep(0.2)
+        pyperclip.copy(self.naver_pw)
+        pw_input.send_keys(Keys.CONTROL, "v")
+        time.sleep(0.3)
+
+        # 로그인 버튼 클릭
+        driver.find_element(By.ID, "log.login").click()
+        time.sleep(3)
+
+        # 로그인 실패 체크
+        if "nidlogin" in driver.current_url:
+            raise RuntimeError(
+                "네이버 로그인 실패: 아이디 또는 비밀번호를 확인하세요.\n"
+                "2단계 인증이 켜져 있으면 해제 후 다시 시도하세요."
+            )
+
+        logger.info("네이버 로그인 성공")
+
+    # ── 블로그 글 발행 ────────────────────────────────────────────────────
 
     def publish(self, title: str, content: str, category_no: int = 0) -> dict:
-        """네이버 블로그에 글을 발행합니다.
+        """네이버 블로그에 글을 발행합니다 (Selenium).
 
         Args:
             title: 블로그 글 제목
             content: 블로그 글 본문 (HTML)
-            category_no: 카테고리 번호 (0이면 기본 카테고리)
+            category_no: 카테고리 번호 (현재 미사용)
 
         Returns:
-            API 응답 딕셔너리
+            발행 결과 딕셔너리
         """
-        data = {
-            "title": title,
-            "contents": content,
-            "categoryNo": category_no,
-        }
+        logger.info("네이버 블로그 발행 시작 (Selenium): %s", title)
 
-        logger.info("네이버 블로그에 글 발행 요청: %s", title)
+        driver = self._create_driver()
+        wait = WebDriverWait(driver, 20)
 
-        response = requests.post(
-            NAVER_BLOG_WRITE_URL,
-            headers=self.headers,
-            data=data,
-            timeout=30,
-        )
+        try:
+            # ── 1. 로그인 ──
+            self._login(driver)
 
-        if response.status_code == 200:
-            result = response.json()
-            logger.info("블로그 발행 성공: %s", result.get("message", ""))
-            return result
-        else:
-            error_msg = f"블로그 발행 실패 (HTTP {response.status_code}): {response.text}"
+            # ── 2. 블로그 글쓰기 페이지 이동 ──
+            write_url = f"https://blog.naver.com/{self.naver_id}/postwrite"
+            driver.get(write_url)
+            time.sleep(5)
+
+            # ── 3. 제목 입력 ──
+            try:
+                title_placeholder = wait.until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, "span.se-placeholder.__se_placeholder")
+                    )
+                )
+                title_placeholder.click()
+            except Exception:
+                title_area = driver.find_element(
+                    By.CSS_SELECTOR, "div.se-documentTitle-editView"
+                )
+                title_area.click()
+
+            time.sleep(0.5)
+            active = driver.switch_to.active_element
+            active.send_keys(title)
+            time.sleep(0.5)
+
+            # ── 4. 본문 영역으로 이동 (Tab) ──
+            active.send_keys(Keys.TAB)
+            time.sleep(1)
+
+            # ── 5. HTML 본문 삽입 ──
+            inserted = driver.execute_script(
+                """
+                try {
+                    document.execCommand('insertHTML', false, arguments[0]);
+                    return true;
+                } catch(e) {
+                    return false;
+                }
+                """,
+                content,
+            )
+
+            if not inserted:
+                driver.execute_script(
+                    """
+                    var el = document.querySelector('[contenteditable="true"]');
+                    if (el) el.innerHTML = arguments[0];
+                    """,
+                    content,
+                )
+
+            time.sleep(1)
+
+            # ── 6. 발행 버튼 클릭 ──
+            publish_btn = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class, 'publish_btn')]")
+                )
+            )
+            publish_btn.click()
+            time.sleep(2)
+
+            # ── 7. 발행 확인 팝업 ──
+            try:
+                confirm_btn = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//button[contains(@class, 'confirm_btn')]")
+                    )
+                )
+                confirm_btn.click()
+                time.sleep(3)
+            except Exception:
+                logger.debug("발행 확인 팝업 없음 — 즉시 발행된 것으로 판단")
+
+            logger.info("블로그 발행 성공: %s", title)
+            return {"status": "success", "title": title}
+
+        except Exception as e:
+            error_msg = f"블로그 발행 실패: {e}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
-
-    def get_auth_url(self) -> str:
-        """네이버 OAuth 인증 URL을 반환합니다.
-
-        브라우저에서 이 URL로 접속하여 인증을 완료하면
-        Access Token을 받을 수 있습니다.
-        """
-        return (
-            "https://nid.naver.com/oauth2.0/authorize"
-            f"?client_id={Config.NAVER_CLIENT_ID}"
-            "&response_type=code"
-            "&redirect_uri=http://localhost:8080/callback"
-            "&state=auto_blog"
-        )
-
-    def get_access_token(self, code: str) -> str:
-        """인증 코드로 Access Token을 발급받습니다.
-
-        Args:
-            code: OAuth 인증 후 받은 코드
-
-        Returns:
-            Access Token 문자열
-        """
-        token_url = "https://nid.naver.com/oauth2.0/token"
-        params = {
-            "grant_type": "authorization_code",
-            "client_id": Config.NAVER_CLIENT_ID,
-            "client_secret": Config.NAVER_CLIENT_SECRET,
-            "code": code,
-            "state": "auto_blog",
-        }
-
-        response = requests.get(token_url, params=params, timeout=30)
-        result = response.json()
-
-        if "access_token" in result:
-            logger.info("Access Token 발급 성공")
-            return result["access_token"]
-        else:
-            error_msg = f"Access Token 발급 실패: {result}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise RuntimeError(error_msg) from e
+        finally:
+            driver.quit()
