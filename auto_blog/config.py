@@ -13,9 +13,10 @@ class Config:
     NAVER_ID: str = os.getenv("NAVER_ID", "")
     NAVER_PASSWORD: str = os.getenv("NAVER_PASSWORD", "")
 
-    # GPT 모델 설정
-    GPT_MODEL: str = os.getenv("GPT_MODEL", "gpt-4o-mini")
-    GPT_MAX_TOKENS: int = int(os.getenv("GPT_MAX_TOKENS", "4096"))
+    # GPT 모델 설정 (GPT-5.2 Thinking)
+    GPT_MODEL: str = os.getenv("GPT_MODEL", "gpt-5.2")
+    GPT_MAX_COMPLETION_TOKENS: int = int(os.getenv("GPT_MAX_COMPLETION_TOKENS", "4096"))
+    GPT_REASONING_EFFORT: str = os.getenv("GPT_REASONING_EFFORT", "medium")
 
     @classmethod
     def validate(cls) -> list[str]:

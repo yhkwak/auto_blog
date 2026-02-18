@@ -47,7 +47,8 @@ class AIWriter:
 
         response = self.client.chat.completions.create(
             model=Config.GPT_MODEL,
-            max_tokens=Config.GPT_MAX_TOKENS,
+            max_completion_tokens=Config.GPT_MAX_COMPLETION_TOKENS,
+            reasoning_effort=Config.GPT_REASONING_EFFORT,
             messages=[
                 {"role": "system", "content": BLOG_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

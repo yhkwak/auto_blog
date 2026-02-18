@@ -148,7 +148,8 @@ class IssueWriter:
 
         response = self.client.chat.completions.create(
             model=Config.GPT_MODEL,
-            max_tokens=ISSUE_MAX_TOKENS,
+            max_completion_tokens=ISSUE_MAX_TOKENS,
+            reasoning_effort=Config.GPT_REASONING_EFFORT,
             messages=[
                 {"role": "system", "content": ISSUE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

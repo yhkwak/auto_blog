@@ -95,7 +95,8 @@ class TrendFinder:
 
         response = self.client.chat.completions.create(
             model=Config.GPT_MODEL,
-            max_tokens=2000,
+            max_completion_tokens=2000,
+            reasoning_effort=Config.GPT_REASONING_EFFORT,
             messages=[
                 {"role": "system", "content": TREND_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
