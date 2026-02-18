@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 
 from .config import Config
@@ -10,6 +11,7 @@ from .naver_blog import NaverBlogClient
 from .scheduler import run_scheduler
 from .trend_finder import TrendFinder
 
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
