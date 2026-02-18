@@ -1,4 +1,6 @@
+import html as html_lib
 import logging
+import re
 import time
 
 from selenium import webdriver
@@ -6,6 +8,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
@@ -16,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class NaverBlogClient:
-    """Selenium 브라우저 자동화로 네이버 블로그에 글을 발행합니다."""
+    """Selenium 브라우저 자동화로 네이버 블로그에 글을 발행합니다.
+
+    스마트에디터 ONE은 가상 커서 + 숨겨진 입력 버퍼를 사용하므로
+    send_keys()가 작동하지 않습니다.  pyperclip(클립보드) + Ctrl+V
+    붙여넣기 방식으로 모든 텍스트를 입력합니다.
+    """
 
     NAVER_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 
@@ -86,14 +94,77 @@ class NaverBlogClient:
 
         logger.info("네이버 로그인 성공")
 
-    # ── 블로그 글 발행 ────────────────────────────────────────────────────
+    # ── 클립보드 유틸 ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _clipboard_paste(driver: webdriver.Chrome, text: str) -> None:
+        """pyperclip으로 클립보드에 복사 후 Ctrl+V 붙여넣기."""
+        import pyperclip
+
+        pyperclip.copy(text)
+        time.sleep(0.2)
+        ActionChains(driver) \
+            .key_down(Keys.CONTROL).send_keys('v').key_up(Keys.CONTROL) \
+            .perform()
+
+    @staticmethod
+    def _clipboard_paste_html(
+        driver: webdriver.Chrome, html_content: str, plain_text: str
+    ) -> bool:
+        """Clipboard API로 HTML을 클립보드에 설정 후 Ctrl+V 붙여넣기.
+
+        HTML 서식(제목, 굵게, 목록 등)을 유지한 채 스마트에디터에 삽입합니다.
+        Clipboard API 사용이 불가능하면 False를 반환합니다.
+        """
+        try:
+            # Chrome DevTools Protocol로 클립보드 권한 부여
+            driver.execute_cdp_cmd('Browser.grantPermissions', {
+                'permissions': ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+            })
+
+            success = driver.execute_async_script("""
+                const callback = arguments[arguments.length - 1];
+                try {
+                    const item = new ClipboardItem({
+                        'text/html':  new Blob([arguments[0]], {type: 'text/html'}),
+                        'text/plain': new Blob([arguments[1]], {type: 'text/plain'})
+                    });
+                    navigator.clipboard.write([item])
+                        .then(() => callback(true))
+                        .catch(() => callback(false));
+                } catch(e) {
+                    callback(false);
+                }
+            """, html_content, plain_text)
+
+            if success:
+                time.sleep(0.3)
+                ActionChains(driver) \
+                    .key_down(Keys.CONTROL).send_keys('v').key_up(Keys.CONTROL) \
+                    .perform()
+                return True
+        except Exception as e:
+            logger.debug("Clipboard API HTML 붙여넣기 실패: %s", e)
+
+        return False
+
+    @staticmethod
+    def _html_to_text(html_content: str) -> str:
+        """HTML → 텍스트 변환 (단락 구조 유지)."""
+        text = re.sub(r'<br\s*/?\s*>', '\n', html_content)
+        text = re.sub(r'</p>\s*', '\n\n', text)
+        text = re.sub(r'</h[1-6]>\s*', '\n\n', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = html_lib.unescape(text)
+        return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    # ── 카테고리 선택 ─────────────────────────────────────────────────────
 
     def _select_category(
         self, driver: webdriver.Chrome, wait: WebDriverWait, category_name: str
     ) -> None:
         """카테고리를 선택합니다."""
         try:
-            # 카테고리 버튼 찾기 (여러 셀렉터 시도)
             category_btn = None
             css_selectors = [
                 "button.se-publish-category-btn",
@@ -127,7 +198,6 @@ class NaverBlogClient:
             category_btn.click()
             time.sleep(1)
 
-            # 카테고리 목록에서 이름으로 찾아 클릭
             items = driver.find_elements(
                 By.XPATH, f"//*[normalize-space(text())='{category_name}']"
             )
@@ -138,12 +208,20 @@ class NaverBlogClient:
                     logger.info("카테고리 선택: %s", category_name)
                     return
 
-            logger.warning("카테고리 '%s'를 찾을 수 없습니다. 기본 카테고리로 발행합니다.", category_name)
+            logger.warning(
+                "카테고리 '%s'를 찾을 수 없습니다. 기본 카테고리로 발행합니다.",
+                category_name,
+            )
         except Exception as e:
             logger.warning("카테고리 선택 중 오류 (기본 카테고리로 진행): %s", e)
 
+    # ── 블로그 글 발행 ────────────────────────────────────────────────────
+
     def publish(self, title: str, content: str, category_name: str = "") -> dict:
         """네이버 블로그에 글을 발행합니다 (Selenium).
+
+        스마트에디터 ONE의 가상 커서에 대응하여 모든 입력을
+        클립보드 붙여넣기(pyperclip + Ctrl+V) 방식으로 수행합니다.
 
         Args:
             title: 블로그 글 제목
@@ -167,64 +245,90 @@ class NaverBlogClient:
             driver.get(write_url)
             time.sleep(5)
 
-            # ── 2-1. 카테고리 선택 ──
+            # ── 2-1. "작성 중인 글이 있습니다" 팝업 처리 ──
+            try:
+                popup_btn = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH,
+                         "//button[contains(text(),'새로 작성') or "
+                         "contains(text(),'확인') or "
+                         "contains(text(),'새로작성')]")
+                    )
+                )
+                popup_btn.click()
+                logger.info("'작성 중인 글' 팝업 닫음")
+                time.sleep(1)
+            except Exception:
+                pass  # 팝업 없음
+
+            # ── 2-2. 카테고리 선택 ──
             if category_name:
                 self._select_category(driver, wait, category_name)
                 time.sleep(0.5)
 
-            # ── 3. 제목 입력 ──
-            try:
-                title_placeholder = wait.until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, "span.se-placeholder.__se_placeholder")
+            # ── 3. 제목 입력 (클립보드 붙여넣기) ──
+            title_selectors = [
+                (By.CSS_SELECTOR, "span.se-placeholder.__se_placeholder"),
+                (By.CSS_SELECTOR, ".se-documentTitle-editView"),
+                (By.CSS_SELECTOR, ".se-section-title"),
+                (By.XPATH, "//*[contains(@class,'documentTitle')]//p"),
+            ]
+            title_clicked = False
+            for by, sel in title_selectors:
+                try:
+                    el = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((by, sel))
                     )
-                )
-                title_placeholder.click()
-            except Exception:
-                title_area = driver.find_element(
-                    By.CSS_SELECTOR, "div.se-documentTitle-editView"
-                )
-                title_area.click()
+                    el.click()
+                    title_clicked = True
+                    break
+                except Exception:
+                    continue
 
+            if not title_clicked:
+                logger.warning("제목 영역을 찾지 못해 페이지 상단 클릭으로 대체합니다.")
+                ActionChains(driver).move_by_offset(480, 200).click().perform()
+
+            time.sleep(0.3)
+            self._clipboard_paste(driver, title)
+            logger.info("제목 입력 완료")
             time.sleep(0.5)
-            active = driver.switch_to.active_element
-            active.send_keys(title)
+
+            # ── 4. 본문 영역으로 이동 ──
+            ActionChains(driver).send_keys(Keys.TAB).perform()
             time.sleep(0.5)
 
-            # ── 4. 본문 영역으로 이동 (Tab) ──
-            active.send_keys(Keys.TAB)
-            time.sleep(1)
+            # ── 5. 본문 입력 (Clipboard API HTML → 평문 텍스트 폴백) ──
+            plain_text = self._html_to_text(content)
 
-            # ── 5. HTML 본문 삽입 ──
-            inserted = driver.execute_script(
-                """
-                try {
-                    document.execCommand('insertHTML', false, arguments[0]);
-                    return true;
-                } catch(e) {
-                    return false;
-                }
-                """,
-                content,
-            )
-
-            if not inserted:
-                driver.execute_script(
-                    """
-                    var el = document.querySelector('[contenteditable="true"]');
-                    if (el) el.innerHTML = arguments[0];
-                    """,
-                    content,
-                )
+            html_pasted = self._clipboard_paste_html(driver, content, plain_text)
+            if html_pasted:
+                logger.info("HTML 본문 붙여넣기 완료 (서식 유지)")
+            else:
+                logger.info("HTML 붙여넣기 불가 → 텍스트로 붙여넣기")
+                self._clipboard_paste(driver, plain_text)
 
             time.sleep(1)
 
             # ── 6. 발행 버튼 클릭 ──
-            publish_btn = wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, "//button[contains(@class, 'publish_btn')]")
-                )
-            )
+            publish_selectors = [
+                (By.CSS_SELECTOR, "button[class*='publish_btn']"),
+                (By.XPATH, "//button[contains(@class,'publish')]"),
+                (By.XPATH, "//button[contains(text(),'발행')]"),
+            ]
+            publish_btn = None
+            for by, sel in publish_selectors:
+                try:
+                    publish_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((by, sel))
+                    )
+                    break
+                except Exception:
+                    continue
+
+            if not publish_btn:
+                raise RuntimeError("발행 버튼을 찾을 수 없습니다.")
+
             publish_btn.click()
             time.sleep(2)
 
@@ -232,7 +336,11 @@ class NaverBlogClient:
             try:
                 confirm_btn = WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable(
-                        (By.XPATH, "//button[contains(@class, 'confirm_btn')]")
+                        (By.XPATH,
+                         "//button[contains(@class,'confirm') or "
+                         "contains(@class,'ok_btn') or "
+                         "(ancestor::*[contains(@class,'layer')] and "
+                         "contains(text(),'발행'))]")
                     )
                 )
                 confirm_btn.click()

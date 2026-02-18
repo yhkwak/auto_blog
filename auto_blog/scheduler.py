@@ -24,6 +24,7 @@ def run_scheduler(topics_file: str, run_time: str, mode: str = "write") -> None:
     from .issue_writer import IssueWriter
     from .opinion_writer import OpinionWriter
     from .naver_blog import NaverBlogClient
+    from .post_saver import save_post
 
     with open(topics_file, encoding="utf-8") as f:
         raw_lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
@@ -76,6 +77,9 @@ def run_scheduler(topics_file: str, run_time: str, mode: str = "write") -> None:
             else:
                 writer = AIWriter()
                 post = writer.generate_post(topic)
+
+            saved = save_post(post["title"], post["content"])
+            print(f"로컬 저장: {saved}")
 
             result = blog_client.publish(post["title"], post["content"])
             print(f"발행 완료: {post['title']}")

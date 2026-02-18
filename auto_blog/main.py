@@ -8,6 +8,7 @@ from .ai_writer import AIWriter
 from .issue_writer import IssueWriter
 from .opinion_writer import OpinionWriter
 from .naver_blog import NaverBlogClient
+from .post_saver import save_post
 from .scheduler import run_scheduler
 from .trend_finder import TrendFinder
 
@@ -71,6 +72,9 @@ def write_and_publish(
 
     print(f"제목: {post['title']}")
     print(f"본문 길이: {len(post['content'])}자")
+
+    saved = save_post(post["title"], post["content"])
+    print(f"로컬 저장: {saved}")
     print()
 
     result = blog_client.publish(post["title"], post["content"], category_name=category)
@@ -90,6 +94,9 @@ def write_issue_and_publish(
     print(f"제목: {post['title']}")
     print(f"본문 길이: {len(post['content'])}자")
     print(f"게시판: {category}")
+
+    saved = save_post(post["title"], post["content"])
+    print(f"로컬 저장: {saved}")
     print()
 
     result = blog_client.publish(post["title"], post["content"], category_name=category)
@@ -118,6 +125,9 @@ def write_auto_trending_and_publish(category: str = ISSUE_CATEGORY) -> None:
 
     print(f"제목: {post['title']}")
     print(f"본문 길이: {len(post['content'])}자")
+
+    saved = save_post(post["title"], post["content"])
+    print(f"로컬 저장: {saved}")
     print()
 
     result = blog_client.publish(post["title"], post["content"], category_name=category)
@@ -143,6 +153,9 @@ def write_opinion_and_publish(
     print(f"제목: {post['title']}")
     print(f"본문 길이: {len(post['content'])}자")
     print(f"게시판: {category}")
+
+    saved = save_post(post["title"], post["content"])
+    print(f"로컬 저장: {saved}")
     print()
 
     result = blog_client.publish(post["title"], post["content"], category_name=category)
