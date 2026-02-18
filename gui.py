@@ -312,6 +312,11 @@ class AutoBlogApp(tk.Tk):
                 from auto_blog.naver_blog import NaverBlogClient
                 post = IssueWriter().generate_post(topic, keywords)
                 self._log_msg(f"  ▸ 제목: {post['title']}  ({len(post['content'])}자)")
+
+                from auto_blog.post_saver import save_post
+                saved = save_post(post['title'], post['content'])
+                self._log_msg(f"  ▸ 로컬 저장: {saved}")
+
                 NaverBlogClient().publish(post['title'], post['content'])
                 self._log_msg("  ▸ 발행 완료!")
                 self.after(0, lambda: self._set_status(
@@ -359,6 +364,10 @@ class AutoBlogApp(tk.Tk):
                 # 글 생성
                 post = IssueWriter().generate_post(topic, keywords)
                 self._log_msg(f"  ▸ 제목: {post['title']}  ({len(post['content'])}자)")
+
+                from auto_blog.post_saver import save_post
+                saved = save_post(post['title'], post['content'])
+                self._log_msg(f"  ▸ 로컬 저장: {saved}")
 
                 # 발행
                 NaverBlogClient().publish(post['title'], post['content'])
@@ -438,6 +447,11 @@ class AutoBlogApp(tk.Tk):
                 from auto_blog.naver_blog import NaverBlogClient
                 post = OpinionWriter().generate_post(topic, thoughts, keywords)
                 self._log_msg(f"  ▸ 제목: {post['title']}  ({len(post['content'])}자)")
+
+                from auto_blog.post_saver import save_post
+                saved = save_post(post['title'], post['content'])
+                self._log_msg(f"  ▸ 로컬 저장: {saved}")
+
                 NaverBlogClient().publish(post['title'], post['content'])
                 self._log_msg("  ▸ 발행 완료!")
                 self.after(0, lambda: self._set_status(
