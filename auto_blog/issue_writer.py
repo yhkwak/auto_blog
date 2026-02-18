@@ -6,7 +6,7 @@ SEO와 클릭률에 최적화된 이슈 정리글을 자동 작성합니다.
 
 import logging
 
-from anthropic import Anthropic
+from openai import OpenAI
 
 from .config import Config
 
@@ -124,7 +124,7 @@ class IssueWriter:
     """네이버 블로그 인기 형식으로 이슈/트렌드 정리글을 생성합니다."""
 
     def __init__(self):
-        self.client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        self.client = OpenAI(api_key=Config.OPENAI_API_KEY)
 
     def generate_post(self, topic: str, keywords: list[str] | None = None) -> dict:
         """이슈 정리글을 생성합니다.
@@ -146,14 +146,17 @@ class IssueWriter:
 
         logger.info("이슈 정리글 생성 요청: %s", topic)
 
-        message = self.client.messages.create(
-            model=Config.CLAUDE_MODEL,
-            max_tokens=ISSUE_MAX_TOKENS,
-            system=ISSUE_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+        response = self.client.chat.completions.create(
+            model=Config.GPT_MODEL,
+            max_completion_tokens=ISSUE_MAX_TOKENS,
+            reasoning_effort=Config.GPT_REASONING_EFFORT,
+            messages=[
+                {"role": "system", "content": ISSUE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
-        response_text = message.content[0].text
+        response_text = response.choices[0].message.content
         lines = response_text.strip().split("\n", 1)
 
         title = lines[0].strip().strip("#").strip()

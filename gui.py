@@ -1,4 +1,4 @@
-"""Auto Blog GUI — Claude AI 자동 블로그 글 작성기"""
+"""Auto Blog GUI — GPT AI 자동 블로그 글 작성기"""
 import os
 import sys
 import queue
@@ -171,7 +171,7 @@ class AutoBlogApp(tk.Tk):
         hdr.pack(fill='x')
         tk.Label(hdr, text="✦ Auto Blog", bg=C['surface'],
                  fg=C['primary'], font=(FONT_KR, 15, 'bold')).pack(side='left')
-        tk.Label(hdr, text="  Claude AI 자동 블로그 글 작성기",
+        tk.Label(hdr, text="  GPT AI 자동 블로그 글 작성기",
                  bg=C['surface'], fg=C['dim'],
                  font=(FONT_KR, 10)).pack(side='left', pady=(4, 0))
 
@@ -405,7 +405,7 @@ class AutoBlogApp(tk.Tk):
         self._opinion_thoughts = self._textbox(
             card, '내 생각 · 경험 · 핵심 포인트  *', height=6,
             hint='자유롭게 적어주세요. 짧은 메모나 키워드도 괜찮습니다. '
-                 'Claude가 읽기 좋은 글로 다듬어 드립니다.')
+                 'GPT가 읽기 좋은 글로 다듬어 드립니다.')
         self._opinion_kw = self._entry(
             card, 'SEO 키워드  (선택 · 쉼표 구분)', '예:  AI, 직업, 미래')
 
@@ -571,20 +571,56 @@ class AutoBlogApp(tk.Tk):
         tab = tk.Frame(nb, bg=C['bg'], padx=16, pady=16)
         nb.add(tab, text='  ⚙  설정  ')
 
-        outer, card = self._card(tab)
+        # ── 하단 저장 버튼 (항상 보이도록 먼저 배치) ──
+        save_bar = tk.Frame(tab, bg=C['surface'], padx=18, pady=10)
+        save_bar.pack(side='bottom', fill='x', pady=(10, 0))
+        ttk.Button(save_bar, text='설정 저장  →', style='Primary.TButton',
+                   command=self._save_settings).pack(side='left')
+        self._cfg_status = self._status_label(save_bar)
+        tk.Label(save_bar, text=f'저장 위치: {ENV_PATH.name}',
+                 bg=C['surface'], fg=C['dim'],
+                 font=(FONT_KR, 8)).pack(side='right')
+
+        # ── 스크롤 가능한 설정 카드 ──
+        outer = tk.Frame(tab, bg=C['border'], padx=1, pady=1)
         outer.pack(fill='both', expand=True)
 
+        canvas = tk.Canvas(outer, bg=C['surface'], highlightthickness=0, bd=0)
+        card = tk.Frame(canvas, bg=C['surface'], padx=24, pady=20)
+
+        card.bind('<Configure>',
+                  lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        win_id = canvas.create_window((0, 0), window=card, anchor='nw')
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfigure(win_id, width=e.width))
+        canvas.pack(side='left', fill='both', expand=True)
+
+        # 마우스 휠 스크롤 (Linux)
+        def _on_enter(e):
+            canvas.bind_all('<Button-4>',
+                            lambda ev: canvas.yview_scroll(-1, 'units'))
+            canvas.bind_all('<Button-5>',
+                            lambda ev: canvas.yview_scroll(1, 'units'))
+
+        def _on_leave(e):
+            canvas.unbind_all('<Button-4>')
+            canvas.unbind_all('<Button-5>')
+
+        canvas.bind('<Enter>', _on_enter)
+        canvas.bind('<Leave>', _on_leave)
+
+        # ── 설정 항목 ──
         tk.Label(card, text="API / 계정 설정", bg=C['surface'],
                  fg=C['text'], font=(FONT_KR, 12, 'bold')).pack(anchor='w')
         tk.Label(card,
-                 text=f"설정은  {ENV_PATH}  파일에 저장됩니다.",
+                 text="설정은 프로그램 폴더의 .env 파일에 저장됩니다.",
                  bg=C['surface'], fg=C['dim'], font=(FONT_KR, 9)).pack(anchor='w', pady=(4, 0))
 
         tk.Frame(card, bg=C['border'], height=1).pack(fill='x', pady=14)
 
-        self._cfg_anthropic = self._entry(
-            card, 'Anthropic API Key  *',
-            'console.anthropic.com 에서 발급', show='*')
+        self._cfg_openai = self._entry(
+            card, 'OpenAI API Key  *',
+            'platform.openai.com 에서 발급', show='*')
         self._cfg_naver_client_id = self._entry(
             card, 'Naver Client ID  (검색 API · 선택)',
             '네이버 개발자 센터 (developers.naver.com) 에서 발급')
@@ -599,15 +635,9 @@ class AutoBlogApp(tk.Tk):
 
         self._load_settings()
 
-        btn_row = tk.Frame(card, bg=C['surface'])
-        btn_row.pack(fill='x', pady=(20, 0))
-        ttk.Button(btn_row, text='저장', style='Primary.TButton',
-                   command=self._save_settings).pack(side='left')
-        self._cfg_status = self._status_label(btn_row)
-
     def _load_settings(self):
         pairs = [
-            (self._cfg_anthropic,           'ANTHROPIC_API_KEY'),
+            (self._cfg_openai,              'OPENAI_API_KEY'),
             (self._cfg_naver_client_id,     'NAVER_CLIENT_ID'),
             (self._cfg_naver_client_secret, 'NAVER_CLIENT_SECRET'),
             (self._cfg_naver_id,            'NAVER_ID'),
@@ -619,13 +649,14 @@ class AutoBlogApp(tk.Tk):
 
     def _save_settings(self):
         lines = [
-            f"ANTHROPIC_API_KEY={self._cfg_anthropic.get().strip()}",
+            f"OPENAI_API_KEY={self._cfg_openai.get().strip()}",
             f"NAVER_CLIENT_ID={self._cfg_naver_client_id.get().strip()}",
             f"NAVER_CLIENT_SECRET={self._cfg_naver_client_secret.get().strip()}",
             f"NAVER_ID={self._cfg_naver_id.get().strip()}",
             f"NAVER_PASSWORD={self._cfg_naver_pw.get().strip()}",
-            "CLAUDE_MODEL=claude-sonnet-4-20250514",
-            "CLAUDE_MAX_TOKENS=4096",
+            "GPT_MODEL=gpt-5.2",
+            "GPT_MAX_COMPLETION_TOKENS=4096",
+            "GPT_REASONING_EFFORT=medium",
         ]
         ENV_PATH.write_text('\n'.join(lines), encoding='utf-8')
         self._reload_config()
@@ -642,11 +673,14 @@ class AutoBlogApp(tk.Tk):
             load_dotenv(dotenv_path=ENV_PATH, override=True)
         try:
             from auto_blog.config import Config
-            Config.ANTHROPIC_API_KEY    = os.getenv('ANTHROPIC_API_KEY', '')
-            Config.NAVER_CLIENT_ID      = os.getenv('NAVER_CLIENT_ID', '')
-            Config.NAVER_CLIENT_SECRET  = os.getenv('NAVER_CLIENT_SECRET', '')
-            Config.NAVER_ID             = os.getenv('NAVER_ID', '')
-            Config.NAVER_PASSWORD       = os.getenv('NAVER_PASSWORD', '')
+            Config.OPENAI_API_KEY           = os.getenv('OPENAI_API_KEY', '')
+            Config.NAVER_CLIENT_ID          = os.getenv('NAVER_CLIENT_ID', '')
+            Config.NAVER_CLIENT_SECRET      = os.getenv('NAVER_CLIENT_SECRET', '')
+            Config.NAVER_ID                 = os.getenv('NAVER_ID', '')
+            Config.NAVER_PASSWORD           = os.getenv('NAVER_PASSWORD', '')
+            Config.GPT_MODEL                = os.getenv('GPT_MODEL', 'gpt-5.2')
+            Config.GPT_MAX_COMPLETION_TOKENS = int(os.getenv('GPT_MAX_COMPLETION_TOKENS', '4096'))
+            Config.GPT_REASONING_EFFORT     = os.getenv('GPT_REASONING_EFFORT', 'medium')
         except Exception:
             pass
 

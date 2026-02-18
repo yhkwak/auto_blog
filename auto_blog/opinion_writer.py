@@ -1,5 +1,5 @@
 import logging
-from anthropic import Anthropic
+from openai import OpenAI
 from .config import Config
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class OpinionWriter:
     """사용자의 생각을 바탕으로 개인 의견 블로그 글을 생성합니다."""
 
     def __init__(self):
-        self.client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        self.client = OpenAI(api_key=Config.OPENAI_API_KEY)
 
     def generate_post(self, topic: str, thoughts: str, keywords: list[str] | None = None) -> dict:
         """사용자의 생각을 바탕으로 의견 글을 생성합니다.
@@ -53,14 +53,17 @@ class OpinionWriter:
 
         logger.info("개인 의견 글 생성 요청: %s", topic)
 
-        message = self.client.messages.create(
-            model=Config.CLAUDE_MODEL,
-            max_tokens=Config.CLAUDE_MAX_TOKENS,
-            system=OPINION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+        response = self.client.chat.completions.create(
+            model=Config.GPT_MODEL,
+            max_completion_tokens=Config.GPT_MAX_COMPLETION_TOKENS,
+            reasoning_effort=Config.GPT_REASONING_EFFORT,
+            messages=[
+                {"role": "system", "content": OPINION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
-        response_text = message.content[0].text
+        response_text = response.choices[0].message.content
         lines = response_text.strip().split("\n", 1)
 
         title = lines[0].strip().strip("#").strip()
