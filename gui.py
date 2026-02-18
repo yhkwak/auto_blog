@@ -4,7 +4,6 @@ import sys
 import queue
 import logging
 import threading
-import webbrowser
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from pathlib import Path
@@ -575,7 +574,7 @@ class AutoBlogApp(tk.Tk):
         outer, card = self._card(tab)
         outer.pack(fill='both', expand=True)
 
-        tk.Label(card, text="API 설정", bg=C['surface'],
+        tk.Label(card, text="API / 계정 설정", bg=C['surface'],
                  fg=C['text'], font=(FONT_KR, 12, 'bold')).pack(anchor='w')
         tk.Label(card,
                  text=f"설정은  {ENV_PATH}  파일에 저장됩니다.",
@@ -586,32 +585,33 @@ class AutoBlogApp(tk.Tk):
         self._cfg_anthropic = self._entry(
             card, 'Anthropic API Key  *',
             'console.anthropic.com 에서 발급', show='*')
-        self._cfg_naver_id = self._entry(
-            card, 'Naver Client ID  *',
+        self._cfg_naver_client_id = self._entry(
+            card, 'Naver Client ID  (검색 API · 선택)',
             '네이버 개발자 센터 (developers.naver.com) 에서 발급')
-        self._cfg_naver_secret = self._entry(
-            card, 'Naver Client Secret  *', '', show='*')
-        self._cfg_naver_token = self._entry(
-            card, 'Naver Access Token  *',
-            '아래 [네이버 인증] 버튼으로 자동 발급받을 수 있습니다.', show='*')
+        self._cfg_naver_client_secret = self._entry(
+            card, 'Naver Client Secret  (검색 API · 선택)', '', show='*')
+        self._cfg_naver_id = self._entry(
+            card, '네이버 아이디  *',
+            '블로그 발행용 네이버 로그인 아이디')
+        self._cfg_naver_pw = self._entry(
+            card, '네이버 비밀번호  *',
+            'Selenium 자동 로그인에 사용됩니다.', show='*')
 
         self._load_settings()
 
         btn_row = tk.Frame(card, bg=C['surface'])
         btn_row.pack(fill='x', pady=(20, 0))
         ttk.Button(btn_row, text='저장', style='Primary.TButton',
-                   command=self._save_settings).pack(side='left', padx=(0, 8))
-        ttk.Button(btn_row, text='🔑  네이버 인증 (Access Token 발급)',
-                   style='Stop.TButton',
-                   command=self._naver_auth).pack(side='left')
+                   command=self._save_settings).pack(side='left')
         self._cfg_status = self._status_label(btn_row)
 
     def _load_settings(self):
         pairs = [
-            (self._cfg_anthropic,    'ANTHROPIC_API_KEY'),
-            (self._cfg_naver_id,     'NAVER_CLIENT_ID'),
-            (self._cfg_naver_secret, 'NAVER_CLIENT_SECRET'),
-            (self._cfg_naver_token,  'NAVER_ACCESS_TOKEN'),
+            (self._cfg_anthropic,           'ANTHROPIC_API_KEY'),
+            (self._cfg_naver_client_id,     'NAVER_CLIENT_ID'),
+            (self._cfg_naver_client_secret, 'NAVER_CLIENT_SECRET'),
+            (self._cfg_naver_id,            'NAVER_ID'),
+            (self._cfg_naver_pw,            'NAVER_PASSWORD'),
         ]
         for widget, key in pairs:
             widget.delete(0, 'end')
@@ -620,9 +620,10 @@ class AutoBlogApp(tk.Tk):
     def _save_settings(self):
         lines = [
             f"ANTHROPIC_API_KEY={self._cfg_anthropic.get().strip()}",
-            f"NAVER_CLIENT_ID={self._cfg_naver_id.get().strip()}",
-            f"NAVER_CLIENT_SECRET={self._cfg_naver_secret.get().strip()}",
-            f"NAVER_ACCESS_TOKEN={self._cfg_naver_token.get().strip()}",
+            f"NAVER_CLIENT_ID={self._cfg_naver_client_id.get().strip()}",
+            f"NAVER_CLIENT_SECRET={self._cfg_naver_client_secret.get().strip()}",
+            f"NAVER_ID={self._cfg_naver_id.get().strip()}",
+            f"NAVER_PASSWORD={self._cfg_naver_pw.get().strip()}",
             "CLAUDE_MODEL=claude-sonnet-4-20250514",
             "CLAUDE_MAX_TOKENS=4096",
         ]
@@ -630,70 +631,7 @@ class AutoBlogApp(tk.Tk):
         self._reload_config()
         self._set_status(self._cfg_status, '✓ 저장 완료', C['success'])
         self._log_msg(f"[설정] .env 파일 저장 완료: {ENV_PATH}")
-        messagebox.showinfo('저장 완료', 'API 설정이 저장되었습니다.', parent=self)
-
-    def _naver_auth(self):
-        client_id = self._cfg_naver_id.get().strip()
-        if not client_id:
-            messagebox.showwarning('입력 오류',
-                                   'Naver Client ID를 먼저 입력하고 저장하세요.', parent=self)
-            return
-
-        auth_url = (
-            f"https://nid.naver.com/oauth2.0/authorize"
-            f"?client_id={client_id}&response_type=code"
-            f"&redirect_uri=http://localhost:8080/callback&state=auto_blog"
-        )
-        webbrowser.open(auth_url)
-
-        # 인증 코드 입력 팝업
-        win = tk.Toplevel(self)
-        win.title('네이버 인증 코드 입력')
-        win.geometry('520x220')
-        win.configure(bg=C['bg'])
-        win.transient(self)
-        win.grab_set()
-
-        tk.Label(win,
-                 text='브라우저에서 인증 완료 후,\n'
-                      '리다이렉트된 주소창의  code=XXXXX  값을 복사하여 입력하세요.',
-                 bg=C['bg'], fg=C['text'], font=(FONT_KR, 10),
-                 justify='left').pack(pady=20, padx=20, anchor='w')
-
-        code_entry = tk.Entry(win, bg=C['input'], fg=C['text'],
-                              insertbackground=C['text'],
-                              font=(FONT_KR, 10), relief='flat',
-                              highlightthickness=1,
-                              highlightbackground=C['border'],
-                              highlightcolor=C['primary'])
-        code_entry.pack(fill='x', padx=20, ipady=7)
-
-        def confirm():
-            code = code_entry.get().strip()
-            if not code:
-                return
-            win.destroy()
-
-            def get_token():
-                try:
-                    self._reload_config()
-                    from auto_blog.naver_blog import NaverBlogClient
-                    token = NaverBlogClient().get_access_token(code)
-                    self.after(0, lambda: self._cfg_naver_token.delete(0, 'end'))
-                    self.after(0, lambda: self._cfg_naver_token.insert(0, token))
-                    self._log_msg("[인증] Naver Access Token 발급 완료")
-                    self.after(0, lambda: messagebox.showinfo(
-                        '인증 완료',
-                        'Access Token이 발급되었습니다.\n[저장] 버튼을 눌러 저장하세요.',
-                        parent=self))
-                except Exception as e:
-                    self._log_msg(f"[인증 오류] {e}")
-                    self.after(0, lambda: messagebox.showerror('인증 오류', str(e), parent=self))
-
-            threading.Thread(target=get_token, daemon=True).start()
-
-        ttk.Button(win, text='확인', style='Primary.TButton',
-                   command=confirm).pack(pady=14)
+        messagebox.showinfo('저장 완료', '설정이 저장되었습니다.', parent=self)
 
     # ── 공통 유틸 ──────────────────────────────────────────────────────────
 
@@ -704,10 +642,11 @@ class AutoBlogApp(tk.Tk):
             load_dotenv(dotenv_path=ENV_PATH, override=True)
         try:
             from auto_blog.config import Config
-            Config.ANTHROPIC_API_KEY  = os.getenv('ANTHROPIC_API_KEY', '')
-            Config.NAVER_CLIENT_ID    = os.getenv('NAVER_CLIENT_ID', '')
-            Config.NAVER_CLIENT_SECRET = os.getenv('NAVER_CLIENT_SECRET', '')
-            Config.NAVER_ACCESS_TOKEN = os.getenv('NAVER_ACCESS_TOKEN', '')
+            Config.ANTHROPIC_API_KEY    = os.getenv('ANTHROPIC_API_KEY', '')
+            Config.NAVER_CLIENT_ID      = os.getenv('NAVER_CLIENT_ID', '')
+            Config.NAVER_CLIENT_SECRET  = os.getenv('NAVER_CLIENT_SECRET', '')
+            Config.NAVER_ID             = os.getenv('NAVER_ID', '')
+            Config.NAVER_PASSWORD       = os.getenv('NAVER_PASSWORD', '')
         except Exception:
             pass
 
