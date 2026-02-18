@@ -151,6 +151,12 @@ class AutoBlogApp(tk.Tk):
         s.map('Stop.TButton',
               background=[('active', '#5a5a7a')])
 
+        s.configure('Trend.TButton', background='#d4380d',
+                    foreground='#ffffff', font=(FONT_KR, 10, 'bold'),
+                    padding=[14, 9], relief='flat', borderwidth=0)
+        s.map('Trend.TButton',
+              background=[('active', '#b32d0a'), ('pressed', '#b32d0a')])
+
         # Radiobutton
         s.configure('TRadiobutton', background=C['surface'],
                     foreground=C['text'], font=(FONT_KR, 10))
@@ -264,7 +270,8 @@ class AutoBlogApp(tk.Tk):
                  fg=C['text'], font=(FONT_KR, 12, 'bold')).pack(anchor='w')
         tk.Label(card,
                  text="트렌딩 이슈를 배경 · 현황 · 다양한 시각 · 전망 구조로 자동 정리합니다. "
-                      "SEO와 클릭률에 최적화된 글을 생성합니다.",
+                      "SEO와 클릭률에 최적화된 글을 생성합니다.\n"
+                      "🔥 트렌드 자동 작성: X · 네이버 뉴스 · 구글 트렌드를 분석해 주제를 자동 선정하고 네이버 인기 블로그 형식으로 작성합니다.",
                  bg=C['surface'], fg=C['dim'], font=(FONT_KR, 9),
                  wraplength=700, justify='left').pack(anchor='w', pady=(4, 0))
 
@@ -283,6 +290,9 @@ class AutoBlogApp(tk.Tk):
         ttk.Button(btn_row, text='글 작성 및 발행  →',
                    style='Primary.TButton',
                    command=self._run_issue).pack(side='right')
+        ttk.Button(btn_row, text='🔥  트렌드 자동 작성  →',
+                   style='Trend.TButton',
+                   command=self._run_issue_auto).pack(side='right', padx=(0, 8))
         self._issue_status = self._status_label(btn_row)
 
     def _run_issue(self):
@@ -309,6 +319,60 @@ class AutoBlogApp(tk.Tk):
                     self._issue_status, '✓ 발행 완료', C['success']))
                 self.after(0, lambda: messagebox.showinfo(
                     '완료', f"발행이 완료되었습니다!\n\n제목: {post['title']}", parent=self))
+            except Exception as e:
+                self._log_msg(f"  ✗ 오류: {e}")
+                self.after(0, lambda: self._set_status(
+                    self._issue_status, '✗ 오류 발생', C['error']))
+                self.after(0, lambda: messagebox.showerror(
+                    '오류', str(e), parent=self))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _run_issue_auto(self):
+        """트렌드를 자동 분석해 가장 조회수 높을 주제로 이슈 정리글을 작성·발행합니다."""
+        self._set_status(self._issue_status, '트렌드 분석 중…', C['dim'])
+        self._log_msg("[자동 트렌드] X · 네이버 뉴스 · 구글 트렌드 분석 시작...")
+
+        def task():
+            try:
+                self._reload_config()
+                from auto_blog.trend_finder import TrendFinder
+                from auto_blog.issue_writer import IssueWriter
+                from auto_blog.naver_blog import NaverBlogClient
+
+                # 트렌드 주제 선정
+                finder = TrendFinder()
+                topic, keywords, reason = finder.get_best_topic()
+                self._log_msg(f"  ▸ 선정 주제: {topic}")
+                self._log_msg(f"  ▸ SEO 키워드: {', '.join(keywords)}")
+                if reason:
+                    self._log_msg(f"  ▸ 선정 이유: {reason[:60]}...")
+
+                # 주제 입력칸에 선정된 주제 표시
+                self.after(0, lambda: (
+                    self._issue_topic.delete(0, 'end'),
+                    self._issue_topic.insert(0, topic),
+                ))
+
+                self.after(0, lambda: self._set_status(
+                    self._issue_status, '글 생성 중…', C['dim']))
+
+                # 글 생성
+                post = IssueWriter().generate_post(topic, keywords)
+                self._log_msg(f"  ▸ 제목: {post['title']}  ({len(post['content'])}자)")
+
+                # 발행
+                NaverBlogClient().publish(post['title'], post['content'])
+                self._log_msg("  ▸ 발행 완료!")
+
+                self.after(0, lambda: self._set_status(
+                    self._issue_status, '✓ 자동 발행 완료', C['success']))
+                self.after(0, lambda: messagebox.showinfo(
+                    '자동 트렌드 발행 완료',
+                    f"트렌드 분석 후 자동 발행 완료!\n\n"
+                    f"주제: {topic}\n"
+                    f"제목: {post['title']}",
+                    parent=self))
             except Exception as e:
                 self._log_msg(f"  ✗ 오류: {e}")
                 self.after(0, lambda: self._set_status(

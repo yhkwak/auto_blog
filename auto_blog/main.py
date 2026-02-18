@@ -8,6 +8,7 @@ from .issue_writer import IssueWriter
 from .opinion_writer import OpinionWriter
 from .naver_blog import NaverBlogClient
 from .scheduler import run_scheduler
+from .trend_finder import TrendFinder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +43,33 @@ def write_issue_and_publish(topic: str, keywords: list[str] | None = None) -> No
     blog_client = NaverBlogClient()
 
     print(f"\n[이슈 정리글] 생성 중: {topic}")
+    post = writer.generate_post(topic, keywords)
+
+    print(f"제목: {post['title']}")
+    print(f"본문 길이: {len(post['content'])}자")
+    print()
+
+    result = blog_client.publish(post["title"], post["content"])
+    print(f"발행 완료: {result}")
+
+
+def write_auto_trending_and_publish() -> None:
+    """트렌드를 자동 분석해 가장 조회수가 높을 이슈 정리글을 생성·발행합니다."""
+    print("\n[자동 트렌드 분석] X, 네이버 뉴스, 구글 트렌드 기반으로 주제 선정 중...")
+
+    finder = TrendFinder()
+    topic, keywords, reason = finder.get_best_topic()
+
+    print(f"  ▸ 선정된 주제: {topic}")
+    print(f"  ▸ SEO 키워드: {', '.join(keywords)}")
+    if reason:
+        print(f"  ▸ 선정 이유: {reason}")
+    print()
+
+    writer = IssueWriter()
+    blog_client = NaverBlogClient()
+
+    print(f"[이슈 정리글] 네이버 인기 형식으로 생성 중...")
     post = writer.generate_post(topic, keywords)
 
     print(f"제목: {post['title']}")
@@ -128,6 +156,12 @@ def main() -> None:
         "-k", "--keywords", nargs="+", help="SEO 키워드 목록", default=None
     )
 
+    # auto 명령어 (자동 트렌드 분석 + 작성 + 발행)
+    subparsers.add_parser(
+        "auto",
+        help="트렌드 자동 분석 후 가장 조회수 높을 이슈 정리글 작성 및 발행 (주제 입력 불필요)",
+    )
+
     # auth 명령어
     subparsers.add_parser("auth", help="네이버 블로그 OAuth 인증")
 
@@ -171,6 +205,14 @@ def main() -> None:
                 print(f"[오류] {e}")
             sys.exit(1)
         write_opinion_and_publish(args.topic, args.thoughts, args.keywords)
+
+    elif args.command == "auto":
+        errors = Config.validate()
+        if errors:
+            for e in errors:
+                print(f"[오류] {e}")
+            sys.exit(1)
+        write_auto_trending_and_publish()
 
     elif args.command == "auth":
         auth_flow()
