@@ -88,13 +88,67 @@ class NaverBlogClient:
 
     # ── 블로그 글 발행 ────────────────────────────────────────────────────
 
-    def publish(self, title: str, content: str, category_no: int = 0) -> dict:
+    def _select_category(
+        self, driver: webdriver.Chrome, wait: WebDriverWait, category_name: str
+    ) -> None:
+        """카테고리를 선택합니다."""
+        try:
+            # 카테고리 버튼 찾기 (여러 셀렉터 시도)
+            category_btn = None
+            css_selectors = [
+                "button.se-publish-category-btn",
+                ".se-category button",
+                "button[class*='category']",
+                ".category_area button",
+            ]
+            for sel in css_selectors:
+                try:
+                    category_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, sel))
+                    )
+                    break
+                except Exception:
+                    continue
+
+            if not category_btn:
+                try:
+                    category_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, "//button[contains(., '카테고리')]")
+                        )
+                    )
+                except Exception:
+                    pass
+
+            if not category_btn:
+                logger.warning("카테고리 버튼을 찾을 수 없습니다. 기본 카테고리로 발행합니다.")
+                return
+
+            category_btn.click()
+            time.sleep(1)
+
+            # 카테고리 목록에서 이름으로 찾아 클릭
+            items = driver.find_elements(
+                By.XPATH, f"//*[normalize-space(text())='{category_name}']"
+            )
+            for item in items:
+                if item.is_displayed():
+                    item.click()
+                    time.sleep(0.5)
+                    logger.info("카테고리 선택: %s", category_name)
+                    return
+
+            logger.warning("카테고리 '%s'를 찾을 수 없습니다. 기본 카테고리로 발행합니다.", category_name)
+        except Exception as e:
+            logger.warning("카테고리 선택 중 오류 (기본 카테고리로 진행): %s", e)
+
+    def publish(self, title: str, content: str, category_name: str = "") -> dict:
         """네이버 블로그에 글을 발행합니다 (Selenium).
 
         Args:
             title: 블로그 글 제목
             content: 블로그 글 본문 (HTML)
-            category_no: 카테고리 번호 (현재 미사용)
+            category_name: 카테고리 이름 (예: "AI글", "일상"). 비어있으면 기본 카테고리.
 
         Returns:
             발행 결과 딕셔너리
@@ -112,6 +166,11 @@ class NaverBlogClient:
             write_url = f"https://blog.naver.com/{self.naver_id}/postwrite"
             driver.get(write_url)
             time.sleep(5)
+
+            # ── 2-1. 카테고리 선택 ──
+            if category_name:
+                self._select_category(driver, wait, category_name)
+                time.sleep(0.5)
 
             # ── 3. 제목 입력 ──
             try:
