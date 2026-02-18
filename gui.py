@@ -1,4 +1,4 @@
-"""Auto Blog GUI — Claude AI 자동 블로그 글 작성기"""
+"""Auto Blog GUI — GPT AI 자동 블로그 글 작성기"""
 import os
 import sys
 import queue
@@ -171,7 +171,7 @@ class AutoBlogApp(tk.Tk):
         hdr.pack(fill='x')
         tk.Label(hdr, text="✦ Auto Blog", bg=C['surface'],
                  fg=C['primary'], font=(FONT_KR, 15, 'bold')).pack(side='left')
-        tk.Label(hdr, text="  Claude AI 자동 블로그 글 작성기",
+        tk.Label(hdr, text="  GPT AI 자동 블로그 글 작성기",
                  bg=C['surface'], fg=C['dim'],
                  font=(FONT_KR, 10)).pack(side='left', pady=(4, 0))
 
@@ -405,7 +405,7 @@ class AutoBlogApp(tk.Tk):
         self._opinion_thoughts = self._textbox(
             card, '내 생각 · 경험 · 핵심 포인트  *', height=6,
             hint='자유롭게 적어주세요. 짧은 메모나 키워드도 괜찮습니다. '
-                 'Claude가 읽기 좋은 글로 다듬어 드립니다.')
+                 'GPT가 읽기 좋은 글로 다듬어 드립니다.')
         self._opinion_kw = self._entry(
             card, 'SEO 키워드  (선택 · 쉼표 구분)', '예:  AI, 직업, 미래')
 
@@ -582,9 +582,9 @@ class AutoBlogApp(tk.Tk):
 
         tk.Frame(card, bg=C['border'], height=1).pack(fill='x', pady=14)
 
-        self._cfg_anthropic = self._entry(
-            card, 'Anthropic API Key  *',
-            'console.anthropic.com 에서 발급', show='*')
+        self._cfg_openai = self._entry(
+            card, 'OpenAI API Key  *',
+            'platform.openai.com 에서 발급', show='*')
         self._cfg_naver_client_id = self._entry(
             card, 'Naver Client ID  (검색 API · 선택)',
             '네이버 개발자 센터 (developers.naver.com) 에서 발급')
@@ -607,7 +607,7 @@ class AutoBlogApp(tk.Tk):
 
     def _load_settings(self):
         pairs = [
-            (self._cfg_anthropic,           'ANTHROPIC_API_KEY'),
+            (self._cfg_openai,              'OPENAI_API_KEY'),
             (self._cfg_naver_client_id,     'NAVER_CLIENT_ID'),
             (self._cfg_naver_client_secret, 'NAVER_CLIENT_SECRET'),
             (self._cfg_naver_id,            'NAVER_ID'),
@@ -619,13 +619,13 @@ class AutoBlogApp(tk.Tk):
 
     def _save_settings(self):
         lines = [
-            f"ANTHROPIC_API_KEY={self._cfg_anthropic.get().strip()}",
+            f"OPENAI_API_KEY={self._cfg_openai.get().strip()}",
             f"NAVER_CLIENT_ID={self._cfg_naver_client_id.get().strip()}",
             f"NAVER_CLIENT_SECRET={self._cfg_naver_client_secret.get().strip()}",
             f"NAVER_ID={self._cfg_naver_id.get().strip()}",
             f"NAVER_PASSWORD={self._cfg_naver_pw.get().strip()}",
-            "CLAUDE_MODEL=claude-sonnet-4-20250514",
-            "CLAUDE_MAX_TOKENS=4096",
+            "GPT_MODEL=gpt-4o-mini",
+            "GPT_MAX_TOKENS=4096",
         ]
         ENV_PATH.write_text('\n'.join(lines), encoding='utf-8')
         self._reload_config()
@@ -642,7 +642,7 @@ class AutoBlogApp(tk.Tk):
             load_dotenv(dotenv_path=ENV_PATH, override=True)
         try:
             from auto_blog.config import Config
-            Config.ANTHROPIC_API_KEY    = os.getenv('ANTHROPIC_API_KEY', '')
+            Config.OPENAI_API_KEY       = os.getenv('OPENAI_API_KEY', '')
             Config.NAVER_CLIENT_ID      = os.getenv('NAVER_CLIENT_ID', '')
             Config.NAVER_CLIENT_SECRET  = os.getenv('NAVER_CLIENT_SECRET', '')
             Config.NAVER_ID             = os.getenv('NAVER_ID', '')

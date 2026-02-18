@@ -9,7 +9,7 @@ import logging
 import re
 from datetime import datetime
 
-from anthropic import Anthropic
+from openai import OpenAI
 
 from .config import Config
 
@@ -70,10 +70,10 @@ TREND_USER_TEMPLATE = """오늘 날짜: {date}
 
 
 class TrendFinder:
-    """Claude AI로 현재 트렌딩 이슈 주제를 자동 발굴합니다."""
+    """OpenAI GPT로 현재 트렌딩 이슈 주제를 자동 발굴합니다."""
 
     def __init__(self):
-        self.client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        self.client = OpenAI(api_key=Config.OPENAI_API_KEY)
 
     def find_trending_topics(self, count: int = 5) -> dict:
         """현재 트렌딩 주제 목록을 분석해 반환합니다.
@@ -93,14 +93,16 @@ class TrendFinder:
 
         logger.info("트렌드 주제 분석 시작 (분석 대상: %d개)", count)
 
-        message = self.client.messages.create(
-            model=Config.CLAUDE_MODEL,
+        response = self.client.chat.completions.create(
+            model=Config.GPT_MODEL,
             max_tokens=2000,
-            system=TREND_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[
+                {"role": "system", "content": TREND_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
-        response_text = message.content[0].text.strip()
+        response_text = response.choices[0].message.content.strip()
 
         # JSON 블록 추출 (```json ... ``` 코드블록 포함 대응)
         json_match = re.search(r"\{[\s\S]*\}", response_text)

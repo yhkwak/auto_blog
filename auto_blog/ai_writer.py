@@ -1,5 +1,5 @@
 import logging
-from anthropic import Anthropic
+from openai import OpenAI
 from .config import Config
 
 logger = logging.getLogger(__name__)
@@ -24,10 +24,10 @@ BLOG_SYSTEM_PROMPT = """당신은 전문 블로그 작가입니다.
 
 
 class AIWriter:
-    """Claude API를 사용하여 블로그 글을 생성합니다."""
+    """OpenAI GPT API를 사용하여 블로그 글을 생성합니다."""
 
     def __init__(self):
-        self.client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        self.client = OpenAI(api_key=Config.OPENAI_API_KEY)
 
     def generate_post(self, topic: str, keywords: list[str] | None = None) -> dict:
         """주어진 주제로 블로그 글을 생성합니다.
@@ -43,16 +43,18 @@ class AIWriter:
         if keywords:
             user_prompt += f"\n키워드: {', '.join(keywords)}"
 
-        logger.info("Claude API로 글 생성 요청: %s", topic)
+        logger.info("GPT API로 글 생성 요청: %s", topic)
 
-        message = self.client.messages.create(
-            model=Config.CLAUDE_MODEL,
-            max_tokens=Config.CLAUDE_MAX_TOKENS,
-            system=BLOG_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+        response = self.client.chat.completions.create(
+            model=Config.GPT_MODEL,
+            max_tokens=Config.GPT_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": BLOG_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
-        response_text = message.content[0].text
+        response_text = response.choices[0].message.content
         lines = response_text.strip().split("\n", 1)
 
         title = lines[0].strip().strip("#").strip()
