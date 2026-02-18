@@ -4,6 +4,8 @@ import sys
 
 from .config import Config
 from .ai_writer import AIWriter
+from .issue_writer import IssueWriter
+from .opinion_writer import OpinionWriter
 from .naver_blog import NaverBlogClient
 from .scheduler import run_scheduler
 
@@ -25,6 +27,40 @@ def write_and_publish(topic: str, keywords: list[str] | None = None) -> None:
 
     print(f"\n글 생성 중: {topic}")
     post = writer.generate_post(topic, keywords)
+
+    print(f"제목: {post['title']}")
+    print(f"본문 길이: {len(post['content'])}자")
+    print()
+
+    result = blog_client.publish(post["title"], post["content"])
+    print(f"발행 완료: {result}")
+
+
+def write_issue_and_publish(topic: str, keywords: list[str] | None = None) -> None:
+    """이슈 정리글을 생성하고 네이버 블로그에 발행합니다."""
+    writer = IssueWriter()
+    blog_client = NaverBlogClient()
+
+    print(f"\n[이슈 정리글] 생성 중: {topic}")
+    post = writer.generate_post(topic, keywords)
+
+    print(f"제목: {post['title']}")
+    print(f"본문 길이: {len(post['content'])}자")
+    print()
+
+    result = blog_client.publish(post["title"], post["content"])
+    print(f"발행 완료: {result}")
+
+
+def write_opinion_and_publish(
+    topic: str, thoughts: str, keywords: list[str] | None = None
+) -> None:
+    """개인 의견 글을 생성하고 네이버 블로그에 발행합니다."""
+    writer = OpinionWriter()
+    blog_client = NaverBlogClient()
+
+    print(f"\n[내 생각 정리글] 생성 중: {topic}")
+    post = writer.generate_post(topic, thoughts, keywords)
 
     print(f"제목: {post['title']}")
     print(f"본문 길이: {len(post['content'])}자")
@@ -61,10 +97,34 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", help="실행할 명령")
 
-    # write 명령어
-    write_parser = subparsers.add_parser("write", help="블로그 글 작성 및 발행")
+    # write 명령어 (기존 범용)
+    write_parser = subparsers.add_parser("write", help="범용 블로그 글 작성 및 발행")
     write_parser.add_argument("topic", help="블로그 글 주제")
     write_parser.add_argument(
+        "-k", "--keywords", nargs="+", help="SEO 키워드 목록", default=None
+    )
+
+    # issue 명령어 (이슈 정리글)
+    issue_parser = subparsers.add_parser(
+        "issue", help="이슈/트렌드 정리글 작성 및 발행 (조회수 최적화)"
+    )
+    issue_parser.add_argument(
+        "topic", help="이슈 주제 (예: '딥시크 AI 논란', '2025 부동산 정책 변화')"
+    )
+    issue_parser.add_argument(
+        "-k", "--keywords", nargs="+", help="SEO 키워드 목록", default=None
+    )
+
+    # opinion 명령어 (내 생각 정리글)
+    opinion_parser = subparsers.add_parser(
+        "opinion", help="내 생각/의견 정리글 작성 및 발행"
+    )
+    opinion_parser.add_argument("topic", help="글의 주제")
+    opinion_parser.add_argument(
+        "thoughts",
+        help="핵심 생각, 경험, 의견을 자유롭게 입력 (예: '요즘 AI 때문에 업무가 많이 바뀌었다. 단순 반복은 줄었지만 판단력이 더 중요해졌다.')",
+    )
+    opinion_parser.add_argument(
         "-k", "--keywords", nargs="+", help="SEO 키워드 목록", default=None
     )
 
@@ -79,6 +139,12 @@ def main() -> None:
     schedule_parser.add_argument(
         "-t", "--time", default="09:00", help="매일 실행 시각 (기본값: 09:00)"
     )
+    schedule_parser.add_argument(
+        "--mode",
+        choices=["issue", "opinion", "write"],
+        default="write",
+        help="글쓰기 모드 선택 (기본값: write)",
+    )
 
     args = parser.parse_args()
 
@@ -90,6 +156,22 @@ def main() -> None:
             sys.exit(1)
         write_and_publish(args.topic, args.keywords)
 
+    elif args.command == "issue":
+        errors = Config.validate()
+        if errors:
+            for e in errors:
+                print(f"[오류] {e}")
+            sys.exit(1)
+        write_issue_and_publish(args.topic, args.keywords)
+
+    elif args.command == "opinion":
+        errors = Config.validate()
+        if errors:
+            for e in errors:
+                print(f"[오류] {e}")
+            sys.exit(1)
+        write_opinion_and_publish(args.topic, args.thoughts, args.keywords)
+
     elif args.command == "auth":
         auth_flow()
 
@@ -99,7 +181,7 @@ def main() -> None:
             for e in errors:
                 print(f"[오류] {e}")
             sys.exit(1)
-        run_scheduler(args.topics_file, args.time)
+        run_scheduler(args.topics_file, args.time, args.mode)
 
     else:
         parser.print_help()
