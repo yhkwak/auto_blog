@@ -1,5 +1,7 @@
 import html as html_lib
 import logging
+import os
+import random
 import re
 import time
 
@@ -16,6 +18,16 @@ from webdriver_manager.chrome import ChromeDriverManager
 from .config import Config
 
 logger = logging.getLogger(__name__)
+
+# 실제 Chrome 사용자와 동일한 User-Agent 목록
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
 
 
 class NaverBlogClient:
@@ -39,18 +51,36 @@ class NaverBlogClient:
         options = Options()
         options.add_argument("--start-maximized")
         options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument(f"--user-agent={random.choice(_USER_AGENTS)}")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
+        # Chrome 프로필을 유지하면 쿠키 기반 재로그인 등에 유리
+        profile_dir = os.path.join(
+            os.path.expanduser("~"), ".auto_blog_chrome_profile"
+        )
+        options.add_argument(f"--user-data-dir={profile_dir}")
+
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
+
+        # navigator.webdriver 속성 제거 + plugins/languages 스푸핑
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
             {
-                "source": (
-                    "Object.defineProperty(navigator, 'webdriver', "
-                    "{get: () => undefined});"
-                )
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['ko-KR', 'ko', 'en-US', 'en']
+                    });
+                    window.chrome = {runtime: {}};
+                """
             },
         )
         driver.implicitly_wait(10)
@@ -65,25 +95,64 @@ class NaverBlogClient:
         driver.get(self.NAVER_LOGIN_URL)
         time.sleep(2)
 
-        # ID 입력
-        id_input = driver.find_element(By.ID, "id")
+        # ID 입력 — 여러 셀렉터 시도
+        id_input = self._find_element_multi(driver, [
+            (By.ID, "id"),
+            (By.CSS_SELECTOR, "input[name='id']"),
+            (By.CSS_SELECTOR, "#id"),
+        ])
+        if not id_input:
+            raise RuntimeError("네이버 로그인 페이지에서 ID 입력란을 찾을 수 없습니다.")
+
         id_input.click()
-        time.sleep(0.2)
+        time.sleep(0.3 + random.random() * 0.3)
         pyperclip.copy(self.naver_id)
         id_input.send_keys(Keys.CONTROL, "v")
-        time.sleep(0.3)
+        time.sleep(0.3 + random.random() * 0.2)
 
         # PW 입력
-        pw_input = driver.find_element(By.ID, "pw")
+        pw_input = self._find_element_multi(driver, [
+            (By.ID, "pw"),
+            (By.CSS_SELECTOR, "input[name='pw']"),
+            (By.CSS_SELECTOR, "#pw"),
+        ])
+        if not pw_input:
+            raise RuntimeError("네이버 로그인 페이지에서 PW 입력란을 찾을 수 없습니다.")
+
         pw_input.click()
-        time.sleep(0.2)
+        time.sleep(0.2 + random.random() * 0.3)
         pyperclip.copy(self.naver_pw)
         pw_input.send_keys(Keys.CONTROL, "v")
-        time.sleep(0.3)
+        time.sleep(0.3 + random.random() * 0.2)
 
         # 로그인 버튼 클릭
-        driver.find_element(By.ID, "log.login").click()
-        time.sleep(3)
+        login_btn = self._find_element_multi(driver, [
+            (By.ID, "log.login"),
+            (By.CSS_SELECTOR, "button.btn_login, button.btn_global"),
+            (By.CSS_SELECTOR, "button[type='submit']"),
+            (By.XPATH, "//button[contains(text(),'로그인')]"),
+        ])
+        if not login_btn:
+            raise RuntimeError("로그인 버튼을 찾을 수 없습니다.")
+
+        login_btn.click()
+        time.sleep(4)
+
+        # "새로운 기기" 보안 알림 팝업 처리
+        try:
+            skip_btn = WebDriverWait(driver, 3).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH,
+                     "//button[contains(text(),'등록하지') or "
+                     "contains(text(),'나중에') or "
+                     "contains(text(),'건너뛰기')]")
+                )
+            )
+            skip_btn.click()
+            time.sleep(1)
+            logger.info("새로운 기기 보안 알림 건너뜀")
+        except Exception:
+            pass
 
         # 로그인 실패 체크
         if "nidlogin" in driver.current_url:
@@ -93,6 +162,22 @@ class NaverBlogClient:
             )
 
         logger.info("네이버 로그인 성공")
+
+    # ── 엘리먼트 검색 유틸 ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _find_element_multi(driver, selectors, timeout=5):
+        """여러 셀렉터를 순차 시도해 첫 번째 발견된 엘리먼트를 반환합니다."""
+        for by, sel in selectors:
+            try:
+                el = WebDriverWait(driver, timeout).until(
+                    EC.presence_of_element_located((by, sel))
+                )
+                if el.is_displayed():
+                    return el
+            except Exception:
+                continue
+        return None
 
     # ── 클립보드 유틸 ─────────────────────────────────────────────────────
 
@@ -154,6 +239,7 @@ class NaverBlogClient:
         text = re.sub(r'<br\s*/?\s*>', '\n', html_content)
         text = re.sub(r'</p>\s*', '\n\n', text)
         text = re.sub(r'</h[1-6]>\s*', '\n\n', text)
+        text = re.sub(r'</li>\s*', '\n', text)
         text = re.sub(r'<[^>]+>', '', text)
         text = html_lib.unescape(text)
         return re.sub(r'\n{3,}', '\n\n', text).strip()
@@ -165,31 +251,14 @@ class NaverBlogClient:
     ) -> None:
         """카테고리를 선택합니다."""
         try:
-            category_btn = None
-            css_selectors = [
-                "button.se-publish-category-btn",
-                ".se-category button",
-                "button[class*='category']",
-                ".category_area button",
-            ]
-            for sel in css_selectors:
-                try:
-                    category_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, sel))
-                    )
-                    break
-                except Exception:
-                    continue
-
-            if not category_btn:
-                try:
-                    category_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable(
-                            (By.XPATH, "//button[contains(., '카테고리')]")
-                        )
-                    )
-                except Exception:
-                    pass
+            category_btn = self._find_element_multi(driver, [
+                (By.CSS_SELECTOR, "button.se-publish-category-btn"),
+                (By.CSS_SELECTOR, ".se-category button"),
+                (By.CSS_SELECTOR, "button[class*='category']"),
+                (By.CSS_SELECTOR, ".category_area button"),
+                (By.XPATH, "//button[contains(., '카테고리')]"),
+                (By.XPATH, "//span[contains(text(),'카테고리')]/ancestor::button"),
+            ], timeout=5)
 
             if not category_btn:
                 logger.warning("카테고리 버튼을 찾을 수 없습니다. 기본 카테고리로 발행합니다.")
@@ -214,6 +283,32 @@ class NaverBlogClient:
             )
         except Exception as e:
             logger.warning("카테고리 선택 중 오류 (기본 카테고리로 진행): %s", e)
+
+    # ── 디버깅 스크린샷 ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _save_debug_screenshot(driver: webdriver.Chrome, prefix: str = "debug") -> str:
+        """디버깅용 스크린샷을 저장하고 경로를 반환합니다."""
+        import sys
+        from pathlib import Path
+        from datetime import datetime
+
+        if getattr(sys, 'frozen', False):
+            base = Path(sys.executable).parent
+        else:
+            base = Path(__file__).resolve().parent.parent
+
+        debug_dir = base / "logs"
+        debug_dir.mkdir(exist_ok=True)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = str(debug_dir / f"{prefix}_{ts}.png")
+        try:
+            driver.save_screenshot(path)
+            logger.info("디버그 스크린샷 저장: %s", path)
+        except Exception:
+            path = ""
+        return path
 
     # ── 블로그 글 발행 ────────────────────────────────────────────────────
 
@@ -267,26 +362,21 @@ class NaverBlogClient:
                 time.sleep(0.5)
 
             # ── 3. 제목 입력 (클립보드 붙여넣기) ──
-            title_selectors = [
+            title_el = self._find_element_multi(driver, [
                 (By.CSS_SELECTOR, "span.se-placeholder.__se_placeholder"),
+                (By.CSS_SELECTOR, ".se-documentTitle-editView .se-text-paragraph"),
                 (By.CSS_SELECTOR, ".se-documentTitle-editView"),
+                (By.CSS_SELECTOR, ".se-section-title .se-text-paragraph"),
                 (By.CSS_SELECTOR, ".se-section-title"),
                 (By.XPATH, "//*[contains(@class,'documentTitle')]//p"),
-            ]
-            title_clicked = False
-            for by, sel in title_selectors:
-                try:
-                    el = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((by, sel))
-                    )
-                    el.click()
-                    title_clicked = True
-                    break
-                except Exception:
-                    continue
+                (By.XPATH, "//*[contains(@class,'Title')]//span[@class='se-placeholder']"),
+            ], timeout=8)
 
-            if not title_clicked:
+            if title_el:
+                title_el.click()
+            else:
                 logger.warning("제목 영역을 찾지 못해 페이지 상단 클릭으로 대체합니다.")
+                self._save_debug_screenshot(driver, "title_not_found")
                 ActionChains(driver).move_by_offset(480, 200).click().perform()
 
             time.sleep(0.3)
@@ -295,7 +385,18 @@ class NaverBlogClient:
             time.sleep(0.5)
 
             # ── 4. 본문 영역으로 이동 ──
-            ActionChains(driver).send_keys(Keys.TAB).perform()
+            # TAB 대신 직접 본문 영역 클릭 시도 (더 안정적)
+            body_el = self._find_element_multi(driver, [
+                (By.CSS_SELECTOR, ".se-component-content .se-text-paragraph"),
+                (By.CSS_SELECTOR, ".se-documentContent .se-text-paragraph"),
+                (By.CSS_SELECTOR, ".se-section-text .se-text-paragraph"),
+            ], timeout=3)
+
+            if body_el:
+                body_el.click()
+            else:
+                # 폴백: TAB 키로 이동
+                ActionChains(driver).send_keys(Keys.TAB).perform()
             time.sleep(0.5)
 
             # ── 5. 본문 입력 (Clipboard API HTML → 평문 텍스트 폴백) ──
@@ -311,47 +412,44 @@ class NaverBlogClient:
             time.sleep(1)
 
             # ── 6. 발행 버튼 클릭 ──
-            publish_selectors = [
+            publish_btn = self._find_element_multi(driver, [
+                (By.CSS_SELECTOR, "button.publish_btn__Y4pat"),
                 (By.CSS_SELECTOR, "button[class*='publish_btn']"),
                 (By.XPATH, "//button[contains(@class,'publish')]"),
                 (By.XPATH, "//button[contains(text(),'발행')]"),
-            ]
-            publish_btn = None
-            for by, sel in publish_selectors:
-                try:
-                    publish_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((by, sel))
-                    )
-                    break
-                except Exception:
-                    continue
+                (By.XPATH, "//span[contains(text(),'발행')]/ancestor::button"),
+            ], timeout=8)
 
             if not publish_btn:
+                self._save_debug_screenshot(driver, "publish_btn_not_found")
                 raise RuntimeError("발행 버튼을 찾을 수 없습니다.")
 
             publish_btn.click()
             time.sleep(2)
 
             # ── 7. 발행 확인 팝업 ──
-            try:
-                confirm_btn = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable(
-                        (By.XPATH,
-                         "//button[contains(@class,'confirm') or "
-                         "contains(@class,'ok_btn') or "
-                         "(ancestor::*[contains(@class,'layer')] and "
-                         "contains(text(),'발행'))]")
-                    )
-                )
+            confirm_btn = self._find_element_multi(driver, [
+                (By.CSS_SELECTOR, "button.confirm_btn__WEaBq"),
+                (By.XPATH,
+                 "//button[contains(@class,'confirm') or "
+                 "contains(@class,'ok_btn')]"),
+                (By.XPATH,
+                 "//div[contains(@class,'layer')]//button[contains(text(),'발행')]"),
+                (By.XPATH,
+                 "//div[contains(@class,'popup')]//button[contains(text(),'확인')]"),
+            ], timeout=5)
+
+            if confirm_btn:
                 confirm_btn.click()
                 time.sleep(3)
-            except Exception:
+            else:
                 logger.debug("발행 확인 팝업 없음 — 즉시 발행된 것으로 판단")
 
             logger.info("블로그 발행 성공: %s", title)
             return {"status": "success", "title": title}
 
         except Exception as e:
+            self._save_debug_screenshot(driver, "error")
             error_msg = f"블로그 발행 실패: {e}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e

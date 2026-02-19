@@ -8,6 +8,7 @@ import logging
 
 from openai import OpenAI
 
+from .ai_writer import _parse_title_content
 from .config import Config
 
 logger = logging.getLogger(__name__)
@@ -146,21 +147,27 @@ class IssueWriter:
 
         logger.info("이슈 정리글 생성 요청: %s", topic)
 
-        response = self.client.chat.completions.create(
-            model=Config.GPT_MODEL,
-            max_completion_tokens=ISSUE_MAX_TOKENS,
-            reasoning_effort=Config.GPT_REASONING_EFFORT,
-            messages=[
-                {"role": "system", "content": ISSUE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=Config.GPT_MODEL,
+                max_completion_tokens=ISSUE_MAX_TOKENS,
+                reasoning_effort=Config.GPT_REASONING_EFFORT,
+                messages=[
+                    {"role": "system", "content": ISSUE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except Exception as e:
+            logger.error("GPT API 호출 실패: %s", e)
+            raise RuntimeError(f"GPT API 호출 실패: {e}") from e
 
-        response_text = response.choices[0].message.content
-        lines = response_text.strip().split("\n", 1)
+        choice = response.choices[0]
+        if choice.finish_reason == "content_filter":
+            raise RuntimeError("GPT 콘텐츠 필터에 의해 응답이 차단되었습니다.")
+        if not choice.message.content:
+            raise RuntimeError("GPT 응답이 비어있습니다. 다시 시도해주세요.")
 
-        title = lines[0].strip().strip("#").strip()
-        content = lines[1].strip() if len(lines) > 1 else ""
+        title, content = _parse_title_content(choice.message.content)
 
         logger.info("이슈 정리글 생성 완료: %s (%d자)", title, len(content))
         return {"title": title, "content": content}

@@ -1,8 +1,42 @@
 import logging
+import re
+
 from openai import OpenAI
+
 from .config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_title_content(response_text: str) -> tuple[str, str]:
+    """GPT 응답에서 제목과 본문을 분리합니다.
+
+    다양한 형식에 대응합니다:
+    - '# 제목' / '## 제목' (마크다운 헤더)
+    - '제목: ...'
+    - 첫 줄 텍스트 그대로
+    """
+    text = response_text.strip()
+    lines = text.split("\n", 1)
+
+    title_line = lines[0].strip()
+
+    # 마크다운 헤더 제거: "### 제목" → "제목"
+    title = re.sub(r'^#{1,6}\s*', '', title_line).strip()
+    # 앞뒤 따옴표 제거
+    title = title.strip('"').strip("'").strip()
+    # "제목: ..." 형식 처리
+    if title.lower().startswith("제목:") or title.lower().startswith("title:"):
+        title = title.split(":", 1)[1].strip()
+
+    content = lines[1].strip() if len(lines) > 1 else ""
+    # 본문 시작이 빈 줄이면 제거
+    content = content.lstrip("\n")
+
+    if not title:
+        title = "제목 없음"
+
+    return title, content
 
 BLOG_SYSTEM_PROMPT = """당신은 전문 블로그 작가입니다.
 주어진 주제에 대해 매력적이고 정보가 풍부한 블로그 글을 작성합니다.
@@ -45,21 +79,27 @@ class AIWriter:
 
         logger.info("GPT API로 글 생성 요청: %s", topic)
 
-        response = self.client.chat.completions.create(
-            model=Config.GPT_MODEL,
-            max_completion_tokens=Config.GPT_MAX_COMPLETION_TOKENS,
-            reasoning_effort=Config.GPT_REASONING_EFFORT,
-            messages=[
-                {"role": "system", "content": BLOG_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=Config.GPT_MODEL,
+                max_completion_tokens=Config.GPT_MAX_COMPLETION_TOKENS,
+                reasoning_effort=Config.GPT_REASONING_EFFORT,
+                messages=[
+                    {"role": "system", "content": BLOG_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except Exception as e:
+            logger.error("GPT API 호출 실패: %s", e)
+            raise RuntimeError(f"GPT API 호출 실패: {e}") from e
 
-        response_text = response.choices[0].message.content
-        lines = response_text.strip().split("\n", 1)
+        choice = response.choices[0]
+        if choice.finish_reason == "content_filter":
+            raise RuntimeError("GPT 콘텐츠 필터에 의해 응답이 차단되었습니다.")
+        if not choice.message.content:
+            raise RuntimeError("GPT 응답이 비어있습니다. 다시 시도해주세요.")
 
-        title = lines[0].strip().strip("#").strip()
-        content = lines[1].strip() if len(lines) > 1 else ""
+        title, content = _parse_title_content(choice.message.content)
 
         logger.info("글 생성 완료: %s (%d자)", title, len(content))
         return {"title": title, "content": content}

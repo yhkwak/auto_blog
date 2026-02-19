@@ -11,7 +11,17 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SAVE_DIR = Path(__file__).resolve().parent.parent / "saved_posts"
+import sys
+
+
+def _get_save_dir() -> Path:
+    """실행 방식에 관계없이 saved_posts 경로를 반환합니다."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent / "saved_posts"
+    return Path(__file__).resolve().parent.parent / "saved_posts"
+
+
+SAVE_DIR = _get_save_dir()
 
 
 def save_post(title: str, content: str) -> Path:
