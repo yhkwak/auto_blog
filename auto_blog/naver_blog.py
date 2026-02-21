@@ -92,22 +92,24 @@ class NaverBlogClient:
     # ── 로그인 ────────────────────────────────────────────────────────────
 
     def _is_logged_in(self, driver: webdriver.Chrome) -> bool:
-        """이미 로그인 상태인지 확인합니다 (Chrome 프로필 세션 재사용)."""
+        """이미 로그인 상태인지 확인합니다 (Chrome 프로필 세션 재사용).
+
+        블로그 글쓰기 페이지에 직접 접근해서 로그인 리다이렉트 여부로 판단합니다.
+        - 비로그인 → nidlogin 페이지로 리다이렉트
+        - 로그인됨 → 글쓰기 페이지 정상 로드
+        """
         try:
-            driver.get("https://www.naver.com")
-            time.sleep(2)
-            # 로그인 상태면 메일/카페 등 로그인 전용 요소가 보임
-            logged_in = bool(driver.find_elements(
-                By.CSS_SELECTOR,
-                "a.MyView-module__link_login___HpHMW, "   # 내 정보
-                "a[href*='mail.naver.com'], "
-                "span.MyView-module__name___bfF8i, "      # 사용자 이름
-                "a[class*='gnb_logout'], "                 # 로그아웃 버튼
-                "[class*='MyView'] [class*='name']"
-            ))
-            if logged_in:
-                logger.info("기존 세션 유효 → 로그인 스킵")
-            return logged_in
+            write_url = f"https://blog.naver.com/{self.naver_id}/postwrite"
+            driver.get(write_url)
+            time.sleep(4)
+
+            current = driver.current_url
+            if "nidlogin" in current or "nid.naver.com" in current:
+                logger.info("로그인 필요 (로그인 페이지로 리다이렉트됨)")
+                return False
+
+            logger.info("기존 세션 유효 → 로그인 스킵 (URL: %s)", current)
+            return True
         except Exception:
             return False
 
