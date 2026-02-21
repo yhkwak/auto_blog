@@ -383,9 +383,18 @@ class NaverBlogClient:
             logger.info("  제목 입력 완료: %s", title)
             time.sleep(0.5)
 
-            # ── Step 5: 본문 입력 ────────────────────────────────────────
+            # ── Step 5: 본문 영역으로 이동 및 입력 ─────────────────────
             logger.info("[5/7] 본문 입력 중...")
 
+            # (A) 제목에서 본문으로 전환: Enter → Tab 순서로 시도
+            #     SmartEditor ONE에서 Enter는 제목→본문 이동,
+            #     Tab도 다음 편집 영역으로 포커스 이동.
+            ActionChains(driver).send_keys(Keys.ENTER).perform()
+            time.sleep(0.5)
+            ActionChains(driver).send_keys(Keys.TAB).perform()
+            time.sleep(0.5)
+
+            # (B) 본문 영역을 직접 찾아 ActionChains 클릭 (포커스 확보)
             body_el = self._find_any(driver, [
                 # 본문 첫 번째 단락
                 (By.CSS_SELECTOR, ".se-section-text .se-text-paragraph"),
@@ -394,16 +403,26 @@ class NaverBlogClient:
                 (By.CSS_SELECTOR, "[class*='sectionText'] p"),
                 # 플레이스홀더
                 (By.CSS_SELECTOR, ".se-section-text .se-placeholder"),
-            ], timeout=8)
+                # contenteditable 본문 전체
+                (By.CSS_SELECTOR, ".se-section-text .se-component-content"),
+            ], timeout=5)
 
             if body_el:
                 logger.info("  본문 영역 발견: %s", body_el.get_attribute("class"))
-                driver.execute_script("arguments[0].click();", body_el)
+                # ActionChains 클릭 (JS click이 아닌 실제 마우스 클릭으로 포커스 확보)
+                try:
+                    ActionChains(driver).move_to_element(body_el).click().perform()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", body_el)
+                time.sleep(0.3)
+                # 혹시 선택된 내용이 있으면 해제
+                ActionChains(driver).send_keys(Keys.END).perform()
             else:
-                logger.warning("  본문 영역을 찾지 못함 → TAB 키 이동 fallback")
+                logger.warning("  본문 영역을 찾지 못함 → Enter/Tab으로 이미 이동된 상태")
                 self._screenshot(driver, "step5_body_not_found")
-                ActionChains(driver).send_keys(Keys.TAB).perform()
             time.sleep(0.5)
+
+            self._screenshot(driver, "step5_before_paste")
 
             plain_text = self._html_to_plain(content)
             if self._paste_html(driver, content, plain_text):
