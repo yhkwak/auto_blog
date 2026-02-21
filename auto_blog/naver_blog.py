@@ -91,37 +91,82 @@ class NaverBlogClient:
 
     # ── 로그인 ────────────────────────────────────────────────────────────
 
+    def _is_logged_in(self, driver: webdriver.Chrome) -> bool:
+        """이미 로그인 상태인지 확인합니다 (Chrome 프로필 세션 재사용)."""
+        try:
+            driver.get("https://www.naver.com")
+            time.sleep(2)
+            # 로그인 상태면 메일/카페 등 로그인 전용 요소가 보임
+            logged_in = bool(driver.find_elements(
+                By.CSS_SELECTOR,
+                "a.MyView-module__link_login___HpHMW, "   # 내 정보
+                "a[href*='mail.naver.com'], "
+                "span.MyView-module__name___bfF8i, "      # 사용자 이름
+                "a[class*='gnb_logout'], "                 # 로그아웃 버튼
+                "[class*='MyView'] [class*='name']"
+            ))
+            if logged_in:
+                logger.info("기존 세션 유효 → 로그인 스킵")
+            return logged_in
+        except Exception:
+            return False
+
+    @staticmethod
+    def _human_type(element, text: str) -> None:
+        """사람처럼 한 글자씩 랜덤 딜레이로 타이핑합니다."""
+        for ch in text:
+            element.send_keys(ch)
+            time.sleep(random.uniform(0.05, 0.15))
+
     def _login(self, driver: webdriver.Chrome) -> None:
-        """네이버 로그인. 클립보드 붙여넣기로 자동화 탐지를 우회합니다."""
-        import pyperclip
+        """네이버 로그인. 사람처럼 타이핑하여 봇 탐지를 우회합니다.
 
+        1) Chrome 프로필에 기존 세션이 있으면 로그인 스킵
+        2) 한 글자씩 랜덤 딜레이 타이핑 (봇 탐지 우회)
+        3) 입력 사이 사람 수준의 대기 시간 추가
+        """
+        # ── 기존 세션 확인 (Chrome 프로필 재사용) ──
+        if self._is_logged_in(driver):
+            return
+
+        logger.info("기존 세션 없음 → 로그인 진행")
         driver.get(self.NAVER_LOGIN_URL)
-        time.sleep(2)
+        time.sleep(random.uniform(2.0, 3.0))
 
+        # ── 아이디 입력 ──
         id_el = self._find_any(driver, [
             (By.ID, "id"),
             (By.CSS_SELECTOR, "input[name='id']"),
         ], timeout=10)
         if not id_el:
             raise RuntimeError("네이버 로그인: ID 입력란을 찾을 수 없습니다.")
-        id_el.click()
-        time.sleep(0.3)
-        pyperclip.copy(self.naver_id)
-        id_el.send_keys(Keys.CONTROL, "v")
-        time.sleep(0.3)
 
+        # 마우스를 입력란으로 이동 → 클릭 (사람 동작 시뮬레이션)
+        ActionChains(driver).move_to_element(id_el).pause(
+            random.uniform(0.3, 0.6)).click().perform()
+        time.sleep(random.uniform(0.5, 0.8))
+        id_el.clear()
+        time.sleep(random.uniform(0.2, 0.4))
+        self._human_type(id_el, self.naver_id)
+        time.sleep(random.uniform(0.8, 1.5))
+
+        # ── 비밀번호 입력 ──
         pw_el = self._find_any(driver, [
             (By.ID, "pw"),
             (By.CSS_SELECTOR, "input[name='pw']"),
         ], timeout=5)
         if not pw_el:
             raise RuntimeError("네이버 로그인: PW 입력란을 찾을 수 없습니다.")
-        pw_el.click()
-        time.sleep(0.2)
-        pyperclip.copy(self.naver_pw)
-        pw_el.send_keys(Keys.CONTROL, "v")
-        time.sleep(0.3)
 
+        ActionChains(driver).move_to_element(pw_el).pause(
+            random.uniform(0.3, 0.6)).click().perform()
+        time.sleep(random.uniform(0.4, 0.7))
+        pw_el.clear()
+        time.sleep(random.uniform(0.2, 0.3))
+        self._human_type(pw_el, self.naver_pw)
+        time.sleep(random.uniform(1.0, 2.0))
+
+        # ── 로그인 버튼 클릭 ──
         login_btn = self._find_any(driver, [
             (By.ID, "log.login"),
             (By.CSS_SELECTOR, "button.btn_login"),
@@ -129,25 +174,30 @@ class NaverBlogClient:
         ], timeout=5)
         if not login_btn:
             raise RuntimeError("네이버 로그인: 로그인 버튼을 찾을 수 없습니다.")
-        login_btn.click()
-        time.sleep(4)
 
-        # 보안 기기 등록 팝업 자동 닫기
-        try:
-            WebDriverWait(driver, 3).until(
-                EC.element_to_be_clickable((By.XPATH,
-                    "//button[contains(.,'등록하지') or contains(.,'나중에') "
-                    "or contains(.,'건너뛰기')]"))
-            ).click()
-            logger.info("보안 기기 등록 팝업 닫음")
-            time.sleep(1)
-        except Exception:
-            pass
+        ActionChains(driver).move_to_element(login_btn).pause(
+            random.uniform(0.3, 0.5)).click().perform()
+        time.sleep(5)
+
+        # ── 보안 기기 등록 / 알림 팝업 자동 닫기 ──
+        for _ in range(2):
+            try:
+                WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.XPATH,
+                        "//button[contains(.,'등록하지') or contains(.,'나중에') "
+                        "or contains(.,'건너뛰기') or contains(.,'닫기')]"))
+                ).click()
+                logger.info("보안/알림 팝업 닫음")
+                time.sleep(1)
+            except Exception:
+                break
 
         if "nidlogin" in driver.current_url:
+            self._screenshot(driver, "login_failed")
             raise RuntimeError(
                 "네이버 로그인 실패: 아이디/비밀번호를 확인하고, "
-                "2단계 인증이 켜져 있으면 해제해주세요."
+                "2단계 인증이 켜져 있으면 해제해주세요.\n"
+                "logs/ 폴더의 스크린샷을 확인하세요."
             )
         logger.info("네이버 로그인 성공: %s", driver.current_url)
 
