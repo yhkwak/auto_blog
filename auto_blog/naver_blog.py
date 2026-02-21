@@ -258,29 +258,94 @@ class NaverBlogClient:
     # ── 카테고리 선택 ─────────────────────────────────────────────────────
 
     def _select_category(self, driver: webdriver.Chrome, category_name: str) -> None:
-        """카테고리 버튼을 찾아 선택합니다. (메인 문서에서 호출)"""
+        """발행 설정 패널 안에서 카테고리를 선택합니다.
+
+        발행 버튼 클릭 후 열리는 설정 패널 구조:
+          ┌── 카테고리 (드롭다운)
+          ├── 주제
+          ├── 공개 설정
+          ├── ...
+          └── [발행] 확인 버튼
+        """
         try:
-            btn = self._find_any(driver, [
-                (By.CSS_SELECTOR, "button.se-publish-category-btn"),
+            self._screenshot(driver, "category_panel_before")
+
+            # (1) 카테고리 드롭다운/버튼 찾기
+            cat_btn = self._find_any(driver, [
+                # 네이버 블로그 발행 패널의 카테고리 select/button
+                (By.CSS_SELECTOR, "select[class*='category']"),
+                (By.CSS_SELECTOR, "[class*='category'] select"),
                 (By.CSS_SELECTOR, "button[class*='category']"),
-                (By.XPATH, "//button[contains(.,'카테고리')]"),
-            ], timeout=5)
-            if not btn:
-                logger.warning("카테고리 버튼 없음 → 기본 카테고리로 발행")
+                (By.CSS_SELECTOR, "[class*='Category'] button"),
+                (By.CSS_SELECTOR, "[class*='category_btn']"),
+                # 카테고리 텍스트 옆의 드롭다운
+                (By.XPATH,
+                 "//span[contains(text(),'카테고리')]/following::select[1]"),
+                (By.XPATH,
+                 "//span[contains(text(),'카테고리')]/following::button[1]"),
+                (By.XPATH,
+                 "//label[contains(text(),'카테고리')]/following::select[1]"),
+                (By.XPATH,
+                 "//label[contains(text(),'카테고리')]/following::button[1]"),
+            ], timeout=3)
+
+            if not cat_btn:
+                logger.warning("카테고리 드롭다운 없음 → 기본 카테고리로 발행")
                 return
 
-            btn.click()
-            time.sleep(1)
+            tag_name = cat_btn.tag_name.lower()
+            logger.info("  카테고리 요소 발견: <%s> class=%s",
+                        tag_name, cat_btn.get_attribute("class"))
 
+            # (2-a) <select> 태그인 경우
+            if tag_name == "select":
+                from selenium.webdriver.support.ui import Select
+                sel = Select(cat_btn)
+                for opt in sel.options:
+                    if category_name in opt.text:
+                        sel.select_by_visible_text(opt.text)
+                        logger.info("  카테고리 선택 (select): %s", opt.text)
+                        return
+                logger.warning("  카테고리 '%s' 옵션 없음", category_name)
+                return
+
+            # (2-b) <button> 등 커스텀 드롭다운인 경우
+            cat_btn.click()
+            time.sleep(1)
+            self._screenshot(driver, "category_dropdown_open")
+
+            # 드롭다운 항목에서 카테고리 이름 찾기
             for item in driver.find_elements(
-                By.XPATH, f"//*[normalize-space(text())='{category_name}']"
+                By.XPATH,
+                f"//*[normalize-space(text())='{category_name}']"
             ):
                 if item.is_displayed():
-                    item.click()
-                    logger.info("카테고리 선택: %s", category_name)
+                    try:
+                        ActionChains(driver).move_to_element(item).click().perform()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", item)
+                    logger.info("  카테고리 선택: %s", category_name)
+                    time.sleep(0.5)
                     return
 
-            logger.warning("카테고리 '%s' 없음 → 기본 카테고리로 발행", category_name)
+            # li, span, a 등으로도 시도
+            for item in driver.find_elements(
+                By.XPATH,
+                f"//li[contains(.,'{category_name}')] | "
+                f"//a[contains(.,'{category_name}')] | "
+                f"//span[contains(.,'{category_name}')]"
+            ):
+                if item.is_displayed():
+                    try:
+                        ActionChains(driver).move_to_element(item).click().perform()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", item)
+                    logger.info("  카테고리 선택 (부분 매칭): %s", item.text)
+                    time.sleep(0.5)
+                    return
+
+            logger.warning("  카테고리 '%s' 항목 없음 → 기본 카테고리로 발행",
+                           category_name)
         except Exception as e:
             logger.warning("카테고리 선택 오류 (무시): %s", e)
 
@@ -308,30 +373,31 @@ class NaverBlogClient:
         흐름:
           1. 로그인
           2. 글쓰기 페이지 이동
-          3. [메인 문서] 팝업 처리 / 카테고리 선택
-          4. [iframe 전환] 제목 입력
-          5. [iframe] 본문 입력
-          6. [메인 문서 복귀] 발행 버튼 클릭
-          7. 발행 확인
+          3. [메인 문서] 팝업 처리
+          4. [iframe 전환] 제목 입력  (ActionChains 클릭으로 포커스)
+          5. [iframe] 본문 입력       (ActionChains 클릭으로 포커스)
+          6. [메인 문서 복귀] "발행" 버튼 → 설정 패널 열림
+          7. 설정 패널에서 카테고리 선택
+          8. 최종 "발행" 확인 버튼 클릭
         """
         logger.info("===== 네이버 블로그 발행 시작: %s =====", title)
         driver = self._create_driver()
 
         try:
             # ── Step 1: 로그인 ──────────────────────────────────────────
-            logger.info("[1/7] 네이버 로그인 중...")
+            logger.info("[1/8] 네이버 로그인 중...")
             self._login(driver)
 
             # ── Step 2: 글쓰기 페이지 이동 ──────────────────────────────
-            logger.info("[2/7] 글쓰기 페이지 이동 중...")
+            logger.info("[2/8] 글쓰기 페이지 이동 중...")
             write_url = f"https://blog.naver.com/{self.naver_id}/postwrite"
             driver.get(write_url)
             time.sleep(5)
             logger.info("  현재 URL: %s", driver.current_url)
             self._screenshot(driver, "step2_write_page")
 
-            # ── Step 3: 메인 문서에서 팝업/카테고리 처리 ─────────────────
-            logger.info("[3/7] 팝업 처리 및 카테고리 선택 중...")
+            # ── Step 3: 팝업 처리 ──────────────────────────────────────
+            logger.info("[3/8] 팝업 처리 중...")
             try:
                 WebDriverWait(driver, 3).until(
                     EC.element_to_be_clickable((By.XPATH,
@@ -342,84 +408,84 @@ class NaverBlogClient:
             except Exception:
                 pass
 
-            if category_name:
-                self._select_category(driver, category_name)
-                time.sleep(0.5)
-
             # ── Step 4: iframe 전환 → 제목 입력 ─────────────────────────
-            logger.info("[4/7] 에디터 iframe 전환 및 제목 입력 중...")
+            logger.info("[4/8] 에디터 iframe 전환 및 제목 입력 중...")
             self._switch_to_editor_frame(driver)
             self._screenshot(driver, "step4_inside_iframe")
 
-            # 제목 입력 영역 클릭
+            # 제목 입력 영역 찾기 (실제 편집 가능한 <p> 우선)
             title_el = self._find_any(driver, [
-                # 플레이스홀더 (비어있을 때)
-                (By.CSS_SELECTOR, ".se-documentTitle-editView .se-placeholder"),
-                # 실제 편집 영역
+                # 실제 편집 가능한 <p> 태그 (contenteditable 안의 paragraph)
                 (By.CSS_SELECTOR, ".se-documentTitle-editView .se-text-paragraph"),
+                (By.CSS_SELECTOR, "[class*='documentTitle'] .se-text-paragraph"),
+                # 플레이스홀더 (비어있을 때 보이는 요소)
+                (By.CSS_SELECTOR, ".se-documentTitle-editView .se-placeholder"),
+                # 편집 영역 컨테이너
                 (By.CSS_SELECTOR, ".se-documentTitle-editView"),
-                # 대체 셀렉터
-                (By.CSS_SELECTOR, "[class*='documentTitle'] p"),
                 (By.CSS_SELECTOR, "[class*='documentTitle']"),
             ], timeout=10)
 
             if title_el:
-                logger.info("  제목 영역 발견: %s", title_el.get_attribute("class"))
-                driver.execute_script("arguments[0].click();", title_el)
+                logger.info("  제목 영역 발견: tag=%s class=%s",
+                            title_el.tag_name, title_el.get_attribute("class"))
+                # ★ ActionChains 클릭으로 실제 포커스를 제목에 설정
+                try:
+                    ActionChains(driver).move_to_element(title_el).click().perform()
+                except Exception:
+                    # ActionChains 실패 시 JS scrollIntoView + click 시도
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView(true); arguments[0].focus();",
+                        title_el)
+                    driver.execute_script("arguments[0].click();", title_el)
                 time.sleep(0.5)
             else:
                 logger.warning("  제목 영역을 찾지 못함 → 좌표 클릭 fallback")
                 self._screenshot(driver, "step4_title_not_found")
-                # 에디터 최상단 클릭
                 ActionChains(driver).move_to_element_with_offset(
-                    driver.find_element(By.TAG_NAME, "body"), 0, 0
+                    driver.find_element(By.TAG_NAME, "body"), 400, 50
                 ).click().perform()
                 time.sleep(0.5)
 
-            # 전체 선택 후 붙여넣기 (기존 내용 덮어쓰기)
-            ActionChains(driver).key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+            # 기존 텍스트 전체 선택 후 붙여넣기
+            ActionChains(driver).key_down(Keys.CONTROL).send_keys("a") \
+                .key_up(Keys.CONTROL).perform()
             time.sleep(0.2)
             self._paste_text(driver, title)
             logger.info("  제목 입력 완료: %s", title)
+            self._screenshot(driver, "step4_after_title")
             time.sleep(0.5)
 
-            # ── Step 5: 본문 영역으로 이동 및 입력 ─────────────────────
-            logger.info("[5/7] 본문 입력 중...")
+            # ── Step 5: 본문 입력 ──────────────────────────────────────
+            logger.info("[5/8] 본문 입력 중...")
 
-            # (A) 제목에서 본문으로 전환: Enter → Tab 순서로 시도
-            #     SmartEditor ONE에서 Enter는 제목→본문 이동,
-            #     Tab도 다음 편집 영역으로 포커스 이동.
-            ActionChains(driver).send_keys(Keys.ENTER).perform()
-            time.sleep(0.5)
-            ActionChains(driver).send_keys(Keys.TAB).perform()
-            time.sleep(0.5)
-
-            # (B) 본문 영역을 직접 찾아 ActionChains 클릭 (포커스 확보)
+            # 본문 영역을 직접 찾아 ActionChains 클릭 (포커스 확보)
+            # ★ Enter/Tab으로 이동하지 않음 — 직접 클릭으로만 포커스 전환
             body_el = self._find_any(driver, [
-                # 본문 첫 번째 단락
                 (By.CSS_SELECTOR, ".se-section-text .se-text-paragraph"),
                 (By.CSS_SELECTOR, ".se-component-content .se-text-paragraph"),
                 (By.CSS_SELECTOR, ".se-documentContent .se-text-paragraph"),
-                (By.CSS_SELECTOR, "[class*='sectionText'] p"),
                 # 플레이스홀더
                 (By.CSS_SELECTOR, ".se-section-text .se-placeholder"),
-                # contenteditable 본문 전체
+                # 본문 컨테이너
                 (By.CSS_SELECTOR, ".se-section-text .se-component-content"),
-            ], timeout=5)
+                (By.CSS_SELECTOR, ".se-section-text"),
+            ], timeout=8)
 
             if body_el:
-                logger.info("  본문 영역 발견: %s", body_el.get_attribute("class"))
-                # ActionChains 클릭 (JS click이 아닌 실제 마우스 클릭으로 포커스 확보)
+                logger.info("  본문 영역 발견: tag=%s class=%s",
+                            body_el.tag_name, body_el.get_attribute("class"))
+                # ★ ActionChains 실제 마우스 클릭으로 포커스 이동
                 try:
                     ActionChains(driver).move_to_element(body_el).click().perform()
                 except Exception:
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView(true); arguments[0].focus();",
+                        body_el)
                     driver.execute_script("arguments[0].click();", body_el)
-                time.sleep(0.3)
-                # 혹시 선택된 내용이 있으면 해제
-                ActionChains(driver).send_keys(Keys.END).perform()
             else:
-                logger.warning("  본문 영역을 찾지 못함 → Enter/Tab으로 이미 이동된 상태")
+                logger.warning("  본문 영역을 찾지 못함 → Tab 키로 이동 시도")
                 self._screenshot(driver, "step5_body_not_found")
+                ActionChains(driver).send_keys(Keys.TAB).perform()
             time.sleep(0.5)
 
             self._screenshot(driver, "step5_before_paste")
@@ -434,8 +500,8 @@ class NaverBlogClient:
             time.sleep(1)
             self._screenshot(driver, "step5_after_body")
 
-            # ── Step 6: 메인 문서로 복귀 → 발행 버튼 ─────────────────────
-            logger.info("[6/7] 메인 문서로 복귀 후 발행 버튼 클릭 중...")
+            # ── Step 6: 메인 문서로 복귀 → "발행" 버튼 (설정 패널 열기) ──
+            logger.info("[6/8] 메인 문서로 복귀 후 발행 버튼 클릭 (설정 패널 열기)...")
             driver.switch_to.default_content()
             time.sleep(0.5)
 
@@ -458,25 +524,41 @@ class NaverBlogClient:
             logger.info("  발행 버튼 발견: %s", publish_btn.text)
             driver.execute_script("arguments[0].click();", publish_btn)
             time.sleep(2)
+            self._screenshot(driver, "step6_publish_panel")
 
-            # ── Step 7: 발행 확인 팝업 ────────────────────────────────────
-            logger.info("[7/7] 발행 확인 팝업 처리 중...")
+            # ── Step 7: 설정 패널에서 카테고리 선택 ─────────────────────
+            if category_name:
+                logger.info("[7/8] 카테고리 선택: %s", category_name)
+                self._select_category(driver, category_name)
+                time.sleep(0.5)
+            else:
+                logger.info("[7/8] 카테고리 선택 안 함 (기본값 사용)")
+
+            # ── Step 8: 최종 "발행" 확인 버튼 ──────────────────────────
+            logger.info("[8/8] 최종 발행 확인 버튼 클릭 중...")
+            self._screenshot(driver, "step8_before_confirm")
+
             confirm_btn = self._find_any(driver, [
                 (By.CSS_SELECTOR, "button.confirm_btn__WEaBq"),
                 (By.XPATH, "//button[contains(@class,'confirm')]"),
                 (By.XPATH,
-                 "//div[contains(@class,'layer') or contains(@class,'popup')]"
+                 "//div[contains(@class,'layer') or contains(@class,'popup') "
+                 "or contains(@class,'panel')]"
                  "//button[contains(.,'발행') or contains(.,'확인')]"),
+                # 설정 패널 하단의 발행 버튼 (초록색)
+                (By.XPATH,
+                 "//button[contains(@class,'btn') and contains(.,'발행')]"
+                 "[not(contains(@class,'publish_btn'))]"),
             ], timeout=5)
 
             if confirm_btn:
-                logger.info("  발행 확인 팝업 클릭: %s", confirm_btn.text)
+                logger.info("  발행 확인 버튼 클릭: %s", confirm_btn.text)
                 driver.execute_script("arguments[0].click();", confirm_btn)
                 time.sleep(3)
             else:
-                logger.info("  발행 확인 팝업 없음 → 즉시 발행된 것으로 판단")
+                logger.info("  발행 확인 버튼 없음 → 즉시 발행된 것으로 판단")
 
-            self._screenshot(driver, "step7_after_publish")
+            self._screenshot(driver, "step8_after_publish")
             logger.info("===== 발행 성공: %s =====", title)
             return {"status": "success", "title": title}
 
