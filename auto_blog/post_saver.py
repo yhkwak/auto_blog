@@ -64,3 +64,29 @@ def save_post(title: str, content: str) -> Path:
 
     logger.info("글 로컬 저장 완료: %s  (%d bytes)", file_path, file_path.stat().st_size)
     return file_path
+
+
+def load_post_from_file(file_path: "Path | str") -> tuple:
+    """저장된 HTML 파일에서 제목과 내용을 읽어옵니다.
+
+    Args:
+        file_path: 읽을 HTML 파일 경로
+
+    Returns:
+        (title, content) 튜플. title은 텍스트, content는 HTML 본문.
+    """
+    fp = Path(file_path)
+    html_doc = fp.read_text(encoding="utf-8")
+
+    # 제목 추출: <title>...</title>
+    title_match = re.search(r"<title>(.*?)</title>", html_doc, re.DOTALL)
+    title = title_match.group(1).strip() if title_match else fp.stem
+
+    # 본문 추출: <h1> 이후 </body> 이전
+    body_match = re.search(
+        r"<body>\s*<h1>[^<]*</h1>\s*(.*?)\s*</body>", html_doc, re.DOTALL
+    )
+    content = body_match.group(1).strip() if body_match else ""
+
+    logger.info("글 로컬 로드 완료: %s  (제목: %s)", fp.name, title)
+    return title, content

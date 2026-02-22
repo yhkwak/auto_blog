@@ -114,20 +114,38 @@ class NaverBlogClient:
             return False
 
     @staticmethod
-    def _human_type(element, text: str) -> None:
-        """사람처럼 한 글자씩 랜덤 딜레이로 타이핑합니다."""
-        for ch in text:
-            element.send_keys(ch)
-            time.sleep(random.uniform(0.05, 0.15))
+    def _js_set_value(driver: webdriver.Chrome, element, value: str) -> None:
+        """JavaScript로 input 요소에 값을 직접 주입합니다.
+
+        send_keys / 클립보드 붙여넣기는 키보드 이벤트를 발생시켜
+        네이버 봇 탐지에 걸릴 수 있습니다.
+        JS value 주입은 이벤트 패턴이 달라 탐지를 우회합니다.
+        React/Vue native value setter로 프레임워크 상태도 함께 갱신합니다.
+        """
+        driver.execute_script(
+            """
+            var el = arguments[0];
+            var val = arguments[1];
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            ).set;
+            nativeInputValueSetter.call(el, val);
+            el.dispatchEvent(new Event('input',  { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+            """,
+            element,
+            value,
+        )
 
     def _login(self, driver: webdriver.Chrome) -> None:
-        """네이버 로그인. 사람처럼 타이핑하여 봇 탐지를 우회합니다.
+        """네이버 로그인.
 
         1) Chrome 프로필에 기존 세션이 있으면 로그인 스킵
-        2) 한 글자씩 랜덤 딜레이 타이핑 (봇 탐지 우회)
-        3) 입력 사이 사람 수준의 대기 시간 추가
+        2) JS value 주입으로 아이디/비밀번호 입력 (봇 탐지 우회)
+        3) 각 단계 사이 사람 수준의 대기 시간 추가
         """
-        # ── 기존 세션 확인 (Chrome 프로필 재사용) ──
+        # ── 기존 세션 확인 ──
         if self._is_logged_in(driver):
             return
 
@@ -135,7 +153,7 @@ class NaverBlogClient:
         driver.get(self.NAVER_LOGIN_URL)
         time.sleep(random.uniform(2.0, 3.0))
 
-        # ── 아이디 입력 ──
+        # ── 아이디 입력 (JS value 주입) ──
         id_el = self._find_any(driver, [
             (By.ID, "id"),
             (By.CSS_SELECTOR, "input[name='id']"),
@@ -143,16 +161,14 @@ class NaverBlogClient:
         if not id_el:
             raise RuntimeError("네이버 로그인: ID 입력란을 찾을 수 없습니다.")
 
-        # 마우스를 입력란으로 이동 → 클릭 (사람 동작 시뮬레이션)
         ActionChains(driver).move_to_element(id_el).pause(
-            random.uniform(0.3, 0.6)).click().perform()
-        time.sleep(random.uniform(0.5, 0.8))
-        id_el.clear()
-        time.sleep(random.uniform(0.2, 0.4))
-        self._human_type(id_el, self.naver_id)
-        time.sleep(random.uniform(0.8, 1.5))
+            random.uniform(0.4, 0.7)).click().perform()
+        time.sleep(random.uniform(0.3, 0.5))
+        self._js_set_value(driver, id_el, self.naver_id)
+        logger.info("  아이디 입력 완료")
+        time.sleep(random.uniform(0.8, 1.4))
 
-        # ── 비밀번호 입력 ──
+        # ── 비밀번호 입력 (JS value 주입) ──
         pw_el = self._find_any(driver, [
             (By.ID, "pw"),
             (By.CSS_SELECTOR, "input[name='pw']"),
@@ -162,11 +178,10 @@ class NaverBlogClient:
 
         ActionChains(driver).move_to_element(pw_el).pause(
             random.uniform(0.3, 0.6)).click().perform()
-        time.sleep(random.uniform(0.4, 0.7))
-        pw_el.clear()
-        time.sleep(random.uniform(0.2, 0.3))
-        self._human_type(pw_el, self.naver_pw)
-        time.sleep(random.uniform(1.0, 2.0))
+        time.sleep(random.uniform(0.3, 0.5))
+        self._js_set_value(driver, pw_el, self.naver_pw)
+        logger.info("  비밀번호 입력 완료")
+        time.sleep(random.uniform(1.0, 1.8))
 
         # ── 로그인 버튼 클릭 ──
         login_btn = self._find_any(driver, [
@@ -178,7 +193,7 @@ class NaverBlogClient:
             raise RuntimeError("네이버 로그인: 로그인 버튼을 찾을 수 없습니다.")
 
         ActionChains(driver).move_to_element(login_btn).pause(
-            random.uniform(0.3, 0.5)).click().perform()
+            random.uniform(0.3, 0.6)).click().perform()
         time.sleep(5)
 
         # ── 보안 기기 등록 / 알림 팝업 자동 닫기 ──
@@ -197,9 +212,8 @@ class NaverBlogClient:
         if "nidlogin" in driver.current_url:
             self._screenshot(driver, "login_failed")
             raise RuntimeError(
-                "네이버 로그인 실패: 아이디/비밀번호를 확인하고, "
-                "2단계 인증이 켜져 있으면 해제해주세요.\n"
-                "logs/ 폴더의 스크린샷을 확인하세요."
+                "네이버 로그인 실패: 아이디/비밀번호를 확인하거나, "
+                "logs/ 폴더의 스크린샷을 확인해주세요."
             )
         logger.info("네이버 로그인 성공: %s", driver.current_url)
 
