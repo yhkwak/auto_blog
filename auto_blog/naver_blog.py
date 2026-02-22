@@ -16,6 +16,9 @@ import logging
 import os
 import random
 import re
+import shutil
+import socket
+import subprocess
 import time
 
 from selenium import webdriver
@@ -32,14 +35,8 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-]
+_DEBUG_PORT = 9222
+_PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".auto_blog_chrome_profile")
 
 
 class NaverBlogClient:
@@ -51,42 +48,113 @@ class NaverBlogClient:
         self.naver_id = Config.NAVER_ID
         self.naver_pw = Config.NAVER_PASSWORD
 
-    # ── WebDriver ──────────────────────────────────────────────────────────
+    # ── Chrome Remote Debugging ─────────────────────────────────────────────
+
+    @staticmethod
+    def _find_chrome_binary():
+        """시스템에 설치된 Chrome/Chromium 바이너리 경로를 찾습니다."""
+        for name in [
+            "google-chrome", "google-chrome-stable",
+            "chromium-browser", "chromium", "chrome",
+        ]:
+            path = shutil.which(name)
+            if path:
+                return path
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            os.path.expandvars(
+                r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(
+                r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(
+                r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ]
+        for p in candidates:
+            if os.path.isfile(p):
+                return p
+        return None
+
+    @staticmethod
+    def _is_debug_port_open():
+        """Chrome 디버그 포트가 열려 있는지 확인합니다."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            return s.connect_ex(("127.0.0.1", _DEBUG_PORT)) == 0
 
     def _create_driver(self) -> webdriver.Chrome:
-        options = Options()
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument(f"--user-agent={random.choice(_USER_AGENTS)}")
-        options.add_argument("--disable-infobars")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        # 클립보드 권한 허용
-        options.add_argument("--enable-clipboard")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+        """Chrome Remote Debugging 방식으로 드라이버를 생성합니다.
 
-        # NOTE: --user-data-dir을 사용하면 기존 Chrome 인스턴스와 충돌할 수 있습니다.
-        # 충돌 문제가 생기면 아래 두 줄을 주석 처리하세요.
-        profile_dir = os.path.join(os.path.expanduser("~"), ".auto_blog_chrome_profile")
-        options.add_argument(f"--user-data-dir={profile_dir}")
+        기존 Selenium 실행 방식은 Chrome이 자동화 도구로 감지되어
+        네이버 2단계 인증(영수증)이 반복 발생합니다.
+
+        Remote Debugging 방식:
+          1) Chrome을 일반 프로세스로 실행 (--remote-debugging-port)
+          2) user-data-dir에 쿠키/세션 영구 저장
+          3) Selenium은 debuggerAddress로 연결만 수행
+          4) 최초 1회 수동 2FA 후 이후 자동 로그인
+        """
+        # ── 1) Chrome이 디버그 모드로 실행 중인지 확인 ──
+        if not self._is_debug_port_open():
+            chrome_path = self._find_chrome_binary()
+            if not chrome_path:
+                raise RuntimeError(
+                    "Chrome 브라우저를 찾을 수 없습니다.\n"
+                    "Google Chrome을 설치해주세요."
+                )
+
+            logger.info("Chrome 디버그 모드 시작 (port=%d, profile=%s)",
+                        _DEBUG_PORT, _PROFILE_DIR)
+            subprocess.Popen(
+                [
+                    chrome_path,
+                    f"--remote-debugging-port={_DEBUG_PORT}",
+                    f"--user-data-dir={_PROFILE_DIR}",
+                    "--start-maximized",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-infobars",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            # Chrome 시작 대기 (최대 15초)
+            for _ in range(15):
+                time.sleep(1)
+                if self._is_debug_port_open():
+                    break
+            else:
+                raise RuntimeError(
+                    "Chrome 디버그 모드 시작 실패.\n"
+                    "다른 Chrome 인스턴스가 실행 중이면 모두 종료 후 다시 시도해주세요."
+                )
+        else:
+            logger.info("기존 Chrome(디버그 모드)에 연결 (port=%d)", _DEBUG_PORT)
+
+        # ── 2) Selenium을 Chrome에 연결 ──
+        options = Options()
+        options.add_experimental_option(
+            "debuggerAddress", f"127.0.0.1:{_DEBUG_PORT}")
 
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
+        driver.implicitly_wait(0)
 
-        driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-                    Object.defineProperty(navigator, 'languages',
-                        {get: () => ['ko-KR','ko','en-US','en']});
-                    window.chrome = {runtime: {}};
-                """
-            },
-        )
-        driver.implicitly_wait(0)  # explicit wait만 사용
+        # navigator.webdriver 숨김 (chromedriver 연결 시 설정될 수 있음)
+        try:
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": "Object.defineProperty(navigator, 'webdriver', "
+                           "{get: () => undefined});"},
+            )
+        except Exception:
+            pass
+
+        logger.info("Chrome 연결 완료 (URL: %s)", driver.current_url)
         return driver
 
     # ── 로그인 ────────────────────────────────────────────────────────────
@@ -196,6 +264,33 @@ class NaverBlogClient:
             random.uniform(0.3, 0.6)).click().perform()
         time.sleep(5)
 
+        # ── 2단계 인증 대기 (최대 120초) ──
+        # Remote Debugging 방식이므로 사용자가 브라우저를 직접 볼 수 있습니다.
+        # 2FA(영수증 확인 등)가 뜨면 사용자가 수동으로 처리합니다.
+        current = driver.current_url
+        if "nidlogin" in current or "nid.naver.com" in current:
+            logger.info("2단계 인증 감지 → 브라우저에서 수동 인증 대기 (최대 120초)...")
+            logger.info("  ※ 열린 Chrome 창에서 인증을 완료해주세요.")
+            self._screenshot(driver, "2fa_detected")
+
+            for i in range(24):  # 24 * 5초 = 120초
+                time.sleep(5)
+                current = driver.current_url
+                if "nidlogin" not in current and "nid.naver.com" not in current:
+                    logger.info("인증 완료 감지! (URL: %s)", current)
+                    break
+                if i > 0 and i % 4 == 0:
+                    remaining = 120 - (i + 1) * 5
+                    logger.info("  인증 대기 중... (%d초 경과, 남은 시간 %d초)",
+                                (i + 1) * 5, remaining)
+            else:
+                self._screenshot(driver, "2fa_timeout")
+                raise RuntimeError(
+                    "인증 시간 초과 (120초).\n"
+                    "브라우저에서 2단계 인증을 완료해주세요.\n"
+                    "인증 완료 후 다시 실행하면 쿠키가 저장되어 자동 로그인됩니다."
+                )
+
         # ── 보안 기기 등록 / 알림 팝업 자동 닫기 ──
         for _ in range(2):
             try:
@@ -209,12 +304,6 @@ class NaverBlogClient:
             except Exception:
                 break
 
-        if "nidlogin" in driver.current_url:
-            self._screenshot(driver, "login_failed")
-            raise RuntimeError(
-                "네이버 로그인 실패: 아이디/비밀번호를 확인하거나, "
-                "logs/ 폴더의 스크린샷을 확인해주세요."
-            )
         logger.info("네이버 로그인 성공: %s", driver.current_url)
 
     # ── iframe 전환 ────────────────────────────────────────────────────────
