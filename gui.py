@@ -299,6 +299,7 @@ class AutoBlogApp(tk.Tk):
 
         self._build_issue_tab(nb)
         self._build_opinion_tab(nb)
+        self._build_saved_tab(nb)
         self._build_schedule_tab(nb)
         self._build_settings_tab(nb)
 
@@ -815,7 +816,200 @@ class AutoBlogApp(tk.Tk):
 
         threading.Thread(target=task, daemon=True).start()
 
-    # ── Tab 3: 스케줄 ──────────────────────────────────────────────────────
+    # ── Tab 3: 저장된 글 발행 ────────────────────────────────────────────────
+
+    def _build_saved_tab(self, nb: ttk.Notebook):
+        tab = tk.Frame(nb, bg=C['bg'], padx=16, pady=16)
+        nb.add(tab, text='  저장된 글 발행  ')
+
+        outer, card = self._card(tab)
+        outer.pack(fill='both', expand=True, padx=4, pady=4)
+
+        tk.Label(card, text="저장된 글 발행", bg=C['surface'],
+                 fg=C['text'], font=(FONT_KR, 12, 'bold')).pack(anchor='w')
+        tk.Label(card,
+                 text="saved_posts/ 폴더에 저장된 HTML 파일을 선택해 바로 발행합니다.\n"
+                      "글 생성 비용 없이 이전에 저장한 글을 재발행할 수 있습니다.",
+                 bg=C['surface'], fg=C['dim'], font=(FONT_KR, 9),
+                 wraplength=700, justify='left').pack(anchor='w', pady=(4, 0))
+
+        tk.Frame(card, bg=C['border'], height=1).pack(fill='x', pady=14)
+
+        # 파일 목록
+        list_hdr = tk.Frame(card, bg=C['surface'])
+        list_hdr.pack(fill='x', pady=(0, 4))
+        tk.Label(list_hdr, text='저장된 글 목록', bg=C['surface'],
+                 fg=C['text'], font=(FONT_KR, 10)).pack(side='left')
+        ttk.Button(list_hdr, text='새로고침', style='Secondary.TButton',
+                   command=self._refresh_saved_list).pack(side='right')
+
+        list_frame = tk.Frame(card, bg=C['surface'])
+        list_frame.pack(fill='both', expand=True)
+
+        sb = tk.Scrollbar(list_frame)
+        sb.pack(side='right', fill='y')
+
+        self._saved_listbox = tk.Listbox(
+            list_frame, bg=C['input'], fg=C['text'],
+            selectbackground=C['primary'], selectforeground='#ffffff',
+            font=(FONT_KR, 9), relief='flat',
+            highlightthickness=1, highlightbackground=C['border'],
+            yscrollcommand=sb.set, height=10)
+        self._saved_listbox.pack(side='left', fill='both', expand=True)
+        sb.config(command=self._saved_listbox.yview)
+        self._saved_listbox.bind('<<ListboxSelect>>', self._on_saved_select)
+
+        self._saved_file_label = tk.Label(
+            card, text='', bg=C['surface'], fg=C['dim'], font=(FONT_KR, 8))
+        self._saved_file_label.pack(anchor='w', pady=(4, 0))
+
+        # 카테고리
+        self._saved_category = self._combo(
+            card, '카테고리  (선택)', CATEGORIES,
+            '미선택 시 기본 카테고리로 발행됩니다.')
+
+        # 버튼 영역
+        btn_row = tk.Frame(card, bg=C['surface'])
+        btn_row.pack(fill='x', pady=(20, 0))
+
+        self._saved_btn_publish = ttk.Button(
+            btn_row, text='선택한 글 발행',
+            style='Primary.TButton', command=self._run_saved_publish)
+        self._saved_btn_publish.pack(side='right')
+
+        self._saved_btn_preview = ttk.Button(
+            btn_row, text='미리보기',
+            style='Secondary.TButton', command=self._preview_saved)
+        self._saved_btn_preview.pack(side='right', padx=(0, 8))
+
+        self._saved_btn_browse = ttk.Button(
+            btn_row, text='파일 직접 선택',
+            style='Secondary.TButton', command=self._browse_saved_file)
+        self._saved_btn_browse.pack(side='left')
+
+        self._saved_status = self._status_label(btn_row)
+
+        # 저장 경로 표시
+        try:
+            from auto_blog.post_saver import SAVE_DIR
+            save_dir_text = str(SAVE_DIR)
+        except Exception:
+            save_dir_text = 'saved_posts/'
+        tk.Label(card, text=f'저장 폴더: {save_dir_text}',
+                 bg=C['surface'], fg=C['dim'],
+                 font=(FONT_MONO, 8)).pack(anchor='w', pady=(10, 0))
+
+        self._saved_files: list = []
+
+        self._action_buttons.extend([
+            self._saved_btn_publish, self._saved_btn_preview, self._saved_btn_browse,
+        ])
+
+        self._refresh_saved_list()
+
+    def _refresh_saved_list(self):
+        """saved_posts/ 폴더의 HTML 파일 목록을 갱신합니다."""
+        try:
+            from auto_blog.post_saver import SAVE_DIR
+        except Exception:
+            from pathlib import Path
+            SAVE_DIR = Path('saved_posts')
+
+        self._saved_listbox.delete(0, 'end')
+        self._saved_files = []
+
+        if SAVE_DIR.exists():
+            files = sorted(SAVE_DIR.glob('*.html'), reverse=True)
+            for f in files:
+                self._saved_listbox.insert('end', f.name)
+                self._saved_files.append(f)
+
+        count = len(self._saved_files)
+        self._saved_file_label.config(
+            text=f'{count}개 파일 저장됨' if count else '저장된 파일 없음')
+
+    def _on_saved_select(self, event):
+        sel = self._saved_listbox.curselection()
+        if sel:
+            f = self._saved_files[sel[0]]
+            self._saved_file_label.config(text=str(f))
+
+    def _browse_saved_file(self):
+        """파일 탐색기로 HTML 파일을 직접 선택합니다."""
+        from tkinter import filedialog
+        try:
+            from auto_blog.post_saver import SAVE_DIR
+            initial = str(SAVE_DIR) if SAVE_DIR.exists() else '.'
+        except Exception:
+            initial = '.'
+
+        path = filedialog.askopenfilename(
+            parent=self,
+            title='발행할 HTML 파일 선택',
+            initialdir=initial,
+            filetypes=[('HTML 파일', '*.html'), ('모든 파일', '*.*')])
+        if not path:
+            return
+
+        from pathlib import Path as _Path
+        p = _Path(path)
+        if p not in self._saved_files:
+            self._saved_files.insert(0, p)
+            self._saved_listbox.insert(0, p.name)
+        idx = self._saved_files.index(p)
+        self._saved_listbox.selection_clear(0, 'end')
+        self._saved_listbox.selection_set(idx)
+        self._saved_listbox.see(idx)
+        self._saved_file_label.config(text=str(p))
+
+    def _get_saved_file(self):
+        """현재 선택된 파일 경로를 반환합니다."""
+        sel = self._saved_listbox.curselection()
+        if not sel:
+            return None
+        return self._saved_files[sel[0]]
+
+    def _get_saved_category(self) -> str:
+        sel = self._saved_category.get()
+        return '' if sel == CATEGORIES[0] else sel
+
+    def _preview_saved(self):
+        """저장된 글을 읽어 미리보기 팝업을 띄웁니다."""
+        f = self._get_saved_file()
+        if not f:
+            messagebox.showwarning('선택 오류', '발행할 파일을 선택해주세요.', parent=self)
+            return
+        try:
+            from auto_blog.post_saver import load_post_from_file
+            title, content = load_post_from_file(f)
+        except Exception as e:
+            messagebox.showerror('파일 오류', f'파일을 읽을 수 없습니다:\n{e}', parent=self)
+            return
+
+        cat = self._get_saved_category()
+
+        def do_publish():
+            self._publish_post(title, content, cat, self._saved_status)
+
+        PreviewWindow(self, title, content, do_publish)
+
+    def _run_saved_publish(self):
+        """선택된 저장 글을 발행합니다."""
+        f = self._get_saved_file()
+        if not f:
+            messagebox.showwarning('선택 오류', '발행할 파일을 선택해주세요.', parent=self)
+            return
+        try:
+            from auto_blog.post_saver import load_post_from_file
+            title, content = load_post_from_file(f)
+        except Exception as e:
+            messagebox.showerror('파일 오류', f'파일을 읽을 수 없습니다:\n{e}', parent=self)
+            return
+
+        cat = self._get_saved_category()
+        self._publish_post(title, content, cat, self._saved_status)
+
+    # ── Tab 4: 스케줄 ──────────────────────────────────────────────────────
 
     def _build_schedule_tab(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, bg=C['bg'], padx=16, pady=16)
@@ -945,7 +1139,7 @@ class AutoBlogApp(tk.Tk):
         self._set_status(self._sched_status, '중지됨', C['dim'])
         self._log_msg("[스케줄] 중지됨")
 
-    # ── Tab 4: 설정 ────────────────────────────────────────────────────────
+    # ── Tab 5: 설정 ────────────────────────────────────────────────────────
 
     def _build_settings_tab(self, nb: ttk.Notebook):
         tab = tk.Frame(nb, bg=C['bg'], padx=16, pady=16)
